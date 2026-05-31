@@ -312,16 +312,43 @@ function Dashboard({ income, expense, projects, inventory, tg, biz }) {
 }
 
 // ==================== CASHFLOW ====================
-function CashFlow({ income, setIncome, expense, setExpense, tg, biz, addToast }) {
+function CashFlow({ income, setIncome, expense, setExpense, inventory, setInventory, tg, biz, addToast }) {
   const [tab, setTab] = useState("in");
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ date: today(), category: "", desc: "", amount: "" });
+  const [selectedStockItem, setSelectedStockItem] = useState("");
+  const [stockQty, setStockQty] = useState("");
 
   const totalIn = income.reduce((s, r) => s + Number(r.amount), 0);
   const totalOut = expense.reduce((s, r) => s + Number(r.amount), 0);
 
+  const isPembelianStok = tab === "out" && form.category === "Pembelian Stok";
+
+  const handleCategoryChange = (val) => {
+    setForm({ ...form, category: val });
+    if (val !== "Pembelian Stok") {
+      setSelectedStockItem("");
+      setStockQty("");
+    }
+  };
+
+  const handleStockItemChange = (itemId) => {
+    setSelectedStockItem(itemId);
+    const item = inventory.find(i => String(i.id) === String(itemId));
+    if (item && item.costPrice) {
+      setForm(f => ({ ...f, amount: item.costPrice, desc: f.desc || `Pembelian stok: ${item.name}` }));
+    }
+  };
+
   const submit = async () => {
     if (!form.amount || !form.category) return addToast("Lengkapi semua field!", "error");
+
+    // Validasi pembelian stok
+    if (isPembelianStok) {
+      if (!selectedStockItem) return addToast("Pilih barang stok yang dibeli!", "error");
+      if (!stockQty || Number(stockQty) <= 0) return addToast("Masukkan jumlah stok yang dibeli!", "error");
+    }
+
     const rec = { ...form, id: Date.now() };
     if (tab === "in") {
       const updated = [rec, ...income]; setIncome(updated); save("income", updated);
@@ -330,11 +357,33 @@ function CashFlow({ income, setIncome, expense, setExpense, tg, biz, addToast })
       if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
     } else {
       const updated = [rec, ...expense]; setExpense(updated); save("expense", updated);
-      const msg = `📢 <b>Pengeluaran Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💸 ${formatRp(form.amount)}\n📅 ${form.date}`;
-      const res = await sendTelegram(tg.token, tg.chatId, msg);
-      if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
+
+      // Jika pembelian stok → update stok barang yang dipilih
+      if (isPembelianStok && selectedStockItem) {
+        const qty = Number(stockQty);
+        const item = inventory.find(i => String(i.id) === String(selectedStockItem));
+        const updatedInventory = inventory.map(i => {
+          if (String(i.id) !== String(selectedStockItem)) return i;
+          const newQty = Number(i.qty) + qty;
+          const hist = [...(i.history || []), { type: "in", qty, date: today(), note: `Pembelian stok via Cash Flow - ${formatRp(form.amount)}` }];
+          return { ...i, qty: newQty, history: hist };
+        });
+        setInventory(updatedInventory);
+        save("inventory", updatedInventory);
+        addToast(`Stok ${item?.name} bertambah ${qty} unit!`, "success");
+
+        const msg = `📢 <b>Pembelian Stok</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${item?.name || "-"}\n🔢 Qty: +${qty}\n💸 ${formatRp(form.amount)}\n📅 ${form.date}`;
+        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
+      } else {
+        const msg = `📢 <b>Pengeluaran Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💸 ${formatRp(form.amount)}\n📅 ${form.date}`;
+        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
+      }
     }
     setForm({ date: today(), category: "", desc: "", amount: "" });
+    setSelectedStockItem("");
+    setStockQty("");
     setShowModal(false);
     addToast("Transaksi berhasil ditambahkan!", "success");
   };
@@ -407,18 +456,68 @@ function CashFlow({ income, setIncome, expense, setExpense, tg, biz, addToast })
         </table>
       </div>
 
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={tab === "in" ? "➕ Tambah Pemasukan" : "➕ Tambah Pengeluaran"}>
+      <Modal open={showModal} onClose={() => { setShowModal(false); setSelectedStockItem(""); setStockQty(""); }} title={tab === "in" ? "➕ Tambah Pemasukan" : "➕ Tambah Pengeluaran"}>
         <Field label="TANGGAL"><input type="date" style={inputStyle} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
         <Field label="KATEGORI">
-          <select style={inputStyle} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
+          <select style={inputStyle} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
             <option value="">Pilih kategori</option>
             {cats.map(c => <option key={c}>{c}</option>)}
           </select>
         </Field>
+
+        {isPembelianStok && (
+          <div style={{ background: "#0f172a", border: "1px solid #3b82f644", borderRadius: 10, padding: 14, marginBottom: 14 }}>
+            <div style={{ color: "#3b82f6", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>📦 Pilih Barang Stok</div>
+            <Field label="BARANG STOK">
+              <select style={inputStyle} value={selectedStockItem} onChange={e => handleStockItemChange(e.target.value)}>
+                <option value="">-- Pilih barang dari stok --</option>
+                {inventory.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}{item.sku ? ` (${item.sku})` : ""} — Stok: {item.qty} {item.category ? `· ${item.category}` : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {selectedStockItem && (() => {
+              const item = inventory.find(i => String(i.id) === String(selectedStockItem));
+              return item ? (
+                <div style={{ background: "#1e293b", borderRadius: 8, padding: "10px 12px", marginBottom: 10, fontSize: 13 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ color: "#94a3b8" }}>Stok saat ini:</span>
+                    <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{item.qty} unit</span>
+                  </div>
+                  {item.costPrice && <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ color: "#94a3b8" }}>Harga modal/unit:</span>
+                    <span style={{ color: "#f59e0b", fontWeight: 600 }}>{formatRp(item.costPrice)}</span>
+                  </div>}
+                  {item.supplier && <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>Supplier:</span>
+                    <span style={{ color: "#64748b" }}>{item.supplier}</span>
+                  </div>}
+                </div>
+              ) : null;
+            })()}
+            <Field label="JUMLAH UNIT YANG DIBELI">
+              <input type="number" style={inputStyle} placeholder="Masukkan jumlah unit" min="1"
+                value={stockQty}
+                onChange={e => {
+                  setStockQty(e.target.value);
+                  const item = inventory.find(i => String(i.id) === String(selectedStockItem));
+                  if (item && item.costPrice && e.target.value) {
+                    setForm(f => ({ ...f, amount: String(Number(item.costPrice) * Number(e.target.value)) }));
+                  }
+                }}
+              />
+            </Field>
+          </div>
+        )}
+
         <Field label="DESKRIPSI"><input style={inputStyle} placeholder="Deskripsi transaksi" value={form.desc} onChange={e => setForm({ ...form, desc: e.target.value })} /></Field>
-        <Field label="NOMINAL (RP)"><input type="number" style={inputStyle} placeholder="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
+        <Field label={isPembelianStok ? "TOTAL NOMINAL (RP) — auto hitung dari harga modal × qty" : "NOMINAL (RP)"}>
+          <input type="number" style={inputStyle} placeholder="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
+        </Field>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-          <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowModal(false)}>Batal</button>
+          <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => { setShowModal(false); setSelectedStockItem(""); setStockQty(""); }}>Batal</button>
           <button style={tab === "in" ? btnSuccess : btnDanger} onClick={submit}>Simpan</button>
         </div>
       </Modal>
