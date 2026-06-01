@@ -27,9 +27,8 @@ const PROJECT_STATUS = ["Pending", "Berjalan", "Selesai", "Ditunda"];
 const STATUS_COLOR = { Pending: "#f59e0b", Berjalan: "#3b82f6", Selesai: "#10b981", Ditunda: "#ef4444" };
 
 // ==================== SUPABASE CONFIG ====================
-// Ganti dengan URL & Key Supabase project Anda
-const SUPABASE_URL = localStorage.getItem("sb_url") || "";
-const SUPABASE_ANON_KEY = localStorage.getItem("sb_key") || "";
+const SUPABASE_URL = "https://mylhupckzmxwnnghawwm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15bGh1cGNrem14d25uZ2hhd3dtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMTk3NjMsImV4cCI6MjA5NTg5NTc2M30.AZJcqOfUiADohKecQQsiRpL-NCMDZBWggQrsTsuHaTI";
 
 // Supabase REST helper (tanpa library eksternal)
 const sbFetch = async (path, options = {}) => {
@@ -66,7 +65,7 @@ const KEY_TABLE_MAP = {
   "owner_accounts":    { table: "owner_accounts",     mode: "array" },
   "owner_cooldowns":   { table: "owner_cooldowns",    mode: "single" },
   "owner_account":     { table: "owner_account",      mode: "single" },
-  "telegram":          { table: "telegram_config",    mode: "single" },
+  "telegram":          { table: "system_configs",     mode: "system_config", configKey: "tg" },
   "work_hours":        { table: "work_hours",         mode: "single" },
   "integrations_web":  { table: "integrations_web",  mode: "array" },
   "payment_gateways":  { table: "payment_gateways",  mode: "array" },
@@ -111,6 +110,18 @@ const loadFromCloud = async (key, defaultVal) => {
     if (error || !data) return localVal;
     localStorage.setItem(key, JSON.stringify(data)); // update cache
     return data;
+  }
+
+  if (mode === "system_config") {
+    // Baca dari tabel system_configs berdasarkan configKey (kolom key = 'tg')
+    const { configKey } = mapping;
+    const { data, error } = await sbFetch(`${table}?key=eq.${configKey}&limit=1`);
+    if (error || !data || data.length === 0) return localVal;
+    const row = data[0];
+    // value sudah bertipe JSONB — Supabase mengembalikan object langsung (bukan string)
+    const parsed = row.value ?? localVal;
+    localStorage.setItem(key, JSON.stringify(parsed)); // update cache lokal
+    return parsed;
   }
 
   return localVal;
@@ -160,99 +171,65 @@ const saveAndSync = async (key, value) => {
     });
     return;
   }
+
+  if (mode === "system_config") {
+    // PATCH baris yang sudah ada di system_configs (key = configKey)
+    // value dikirim sebagai object langsung — Supabase auto-cast ke JSONB
+    const { configKey } = mapping;
+    await sbFetch(`${table}?key=eq.${configKey}`, {
+      method: "PATCH",
+      headers: { "Prefer": "return=minimal" },
+      body: JSON.stringify({ value }),
+    });
+    return;
+  }
 };
 
 // Alias backward-compat — save sekarang juga sync ke Supabase
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { localStorage.setItem(k, JSON.stringify(v)); saveAndSync(k, v); };
 
-// ==================== SUPABASE SETUP PAGE ====================
-function SupabaseSetup({ onSave }) {
-  const [url, setUrl] = useState(localStorage.getItem("sb_url") || "");
-  const [key, setKey] = useState(localStorage.getItem("sb_key") || "");
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+// ==================== NETWORK STATUS BADGE ====================
+function NetworkBadge({ syncStatus }) {
+  const [netStatus, setNetStatus] = useState(() =>
+    navigator.onLine ? "online" : "offline"
+  );
 
-  const testConnection = async () => {
-    if (!url || !key) return setTestResult({ ok: false, msg: "URL dan Key wajib diisi!" });
-    setTesting(true); setTestResult(null);
-    try {
-      const res = await fetch(url + "/rest/v1/biz_profile?limit=1", {
-        headers: { "apikey": key, "Authorization": "Bearer " + key },
-      });
-      if (res.ok) {
-        setTestResult({ ok: true, msg: "Koneksi Supabase berhasil! ✅" });
-      } else {
-        const t = await res.text();
-        setTestResult({ ok: false, msg: "Gagal: " + t.slice(0, 120) });
-      }
-    } catch (e) {
-      setTestResult({ ok: false, msg: "Error: " + e.message });
-    }
-    setTesting(false);
-  };
+  useEffect(() => {
+    const handleOnline  = () => setNetStatus("online");
+    const handleOffline = () => setNetStatus("offline");
+    window.addEventListener("online",  handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online",  handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
-  const handleSave = () => {
-    if (!url || !key) return;
-    localStorage.setItem("sb_url", url.replace(/\/$/, ""));
-    localStorage.setItem("sb_key", key.trim());
-    onSave();
-  };
+  const cfg = (() => {
+    if (netStatus === "offline")  return { bg: "#ef444420", color: "#ef4444", border: "#ef444440", dot: "#ef4444", label: "No Internet", anim: false };
+    if (syncStatus === "syncing") return { bg: "#f59e0b20", color: "#f59e0b", border: "#f59e0b40", dot: "#f59e0b", label: "Connecting...", anim: true };
+    if (syncStatus === "synced")  return { bg: "#10b98120", color: "#10b981", border: "#10b98140", dot: "#10b981", label: "Connected", anim: false };
+    if (syncStatus === "error")   return { bg: "#ef444420", color: "#ef4444", border: "#ef444440", dot: "#ef4444", label: "Disconnected", anim: false };
+    return                               { bg: "#33415520", color: "#64748b", border: "#33415540", dot: "#475569", label: "Connecting...", anim: true };
+  })();
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0a0f1e", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99999, padding: 20, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ background: "#1e293b", borderRadius: 20, padding: 36, maxWidth: 500, width: "100%", border: "1px solid #334155", boxShadow: "0 30px 80px rgba(0,0,0,0.5)" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 52, marginBottom: 12 }}>☁️</div>
-          <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800, marginBottom: 6 }}>Konfigurasi Supabase</div>
-          <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
-            Masukkan URL dan Anon Key dari project Supabase Anda.<br />
-            Data akan tersinkronisasi otomatis ke cloud.
-          </div>
-        </div>
-
-        <div style={{ background: "#0f172a", borderRadius: 12, padding: "14px 16px", marginBottom: 24, fontSize: 13, color: "#94a3b8", lineHeight: 1.8 }}>
-          <strong style={{ color: "#3b82f6" }}>📋 Cara mendapatkan credentials:</strong><br />
-          1. Buka <strong style={{ color: "#f1f5f9" }}>supabase.com</strong> → Project Anda<br />
-          2. Settings → API<br />
-          3. Salin <strong style={{ color: "#10b981" }}>Project URL</strong> dan <strong style={{ color: "#10b981" }}>anon / public key</strong>
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>SUPABASE PROJECT URL</label>
-          <input style={{ width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" }}
-            value={url} onChange={e => setUrl(e.target.value)} placeholder="https://xxxxxxxxxxxx.supabase.co" />
-        </div>
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>ANON / PUBLIC KEY</label>
-          <input type="password" style={{ width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" }}
-            value={key} onChange={e => setKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6Ikp..." />
-        </div>
-
-        {testResult && (
-          <div style={{ background: testResult.ok ? "#10b98122" : "#ef444422", border: `1px solid ${testResult.ok ? "#10b98144" : "#ef444444"}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: testResult.ok ? "#10b981" : "#fca5a5", fontSize: 13 }}>
-            {testResult.msg}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <button style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none", cursor: "pointer", background: "#334155", color: "#94a3b8", fontWeight: 600, fontSize: 14, opacity: testing ? 0.6 : 1 }}
-            onClick={testConnection} disabled={testing}>
-            {testing ? "⏳ Testing..." : "🔌 Test Koneksi"}
-          </button>
-          <button style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none", cursor: "pointer", background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", color: "#fff", fontWeight: 700, fontSize: 14 }}
-            onClick={handleSave} disabled={!url || !key}>
-            💾 Simpan & Lanjutkan
-          </button>
-        </div>
-        {(localStorage.getItem("sb_url")) && (
-          <button style={{ width: "100%", marginTop: 12, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", background: "none", color: "#64748b", fontSize: 13 }}
-            onClick={onSave}>
-            Lewati (gunakan konfigurasi lama)
-          </button>
-        )}
-      </div>
-    </div>
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      background: cfg.bg, color: cfg.color,
+      border: `1px solid ${cfg.border}`,
+      padding: "3px 10px", borderRadius: 20, fontSize: 12,
+      fontWeight: 600, userSelect: "none",
+    }}>
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: cfg.dot, flexShrink: 0,
+        boxShadow: syncStatus === "synced" ? `0 0 6px ${cfg.dot}` : "none",
+        animation: cfg.anim ? "pulse 1.2s ease-in-out infinite" : "none",
+      }} />
+      {cfg.label}
+    </span>
   );
 }
 
@@ -3041,7 +3018,6 @@ function OwnerPage({ addToast, tg, setTg, systemLocked, setSystemLocked }) {
 // ==================== MAIN APP ====================
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [showSupabaseSetup, setShowSupabaseSetup] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => load("session_user", null));
   const [active, setActive] = useState("dashboard");
   const [sideOpen, setSideOpen] = useState(true);
@@ -3094,7 +3070,6 @@ export default function App() {
   const handleLogout = () => { setCurrentUser(null); save("session_user", null); setActive("dashboard"); };
 
   if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
-  if (showSupabaseSetup) return <SupabaseSetup onSave={() => { setShowSupabaseSetup(false); window.location.reload(); }} />;
   if (!currentUser) return <LoginScreen onLogin={handleLogin} />;
 
   const isOwner = currentUser.role === "owner";
@@ -3187,21 +3162,8 @@ export default function App() {
         </span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ color: "#64748b", fontSize: 13 }}>{new Date().toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
-          {/* Supabase sync status badge */}
-          {isSupabaseReady() ? (
-            <span style={{
-              background: syncStatus === "synced" ? "#10b98122" : syncStatus === "syncing" ? "#f59e0b22" : syncStatus === "error" ? "#ef444422" : "#33415522",
-              color: syncStatus === "synced" ? "#10b981" : syncStatus === "syncing" ? "#f59e0b" : syncStatus === "error" ? "#ef4444" : "#64748b",
-              padding: "3px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer", border: "1px solid transparent"
-            }} onClick={() => setShowSupabaseSetup(true)}>
-              {syncStatus === "synced" ? "☁️ Cloud Sync" : syncStatus === "syncing" ? "⏳ Syncing..." : syncStatus === "error" ? "⚠️ Sync Error" : "☁️ Cloud"}
-            </span>
-          ) : (
-            <span style={{ background: "#f59e0b22", color: "#f59e0b", padding: "3px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer", border: "1px solid #f59e0b44", fontWeight: 600 }}
-              onClick={() => setShowSupabaseSetup(true)}>
-              ⚙️ Setup Cloud
-            </span>
-          )}
+          {/* Network / Cloud status badge */}
+          <NetworkBadge syncStatus={syncStatus} />
           {systemLocked && <span style={{ background: "#ef444422", color: "#ef4444", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: "1px solid #ef444444", cursor: "pointer" }} onClick={() => setSystemLocked(true)}>🔒 SISTEM TERKUNCI</span>}
           {!systemLocked && tg.token && <><span style={{ background: "#ef444422", color: "#ef4444", padding: "3px 10px", borderRadius: 20, fontSize: 12, marginRight: 6 }}>{tg.privateId ? "🔐 Pribadi ✓" : "🔐 Pribadi ✕"}</span><span style={{ background: tg.groupId ? "#3b82f622" : "#33415522", color: tg.groupId ? "#3b82f6" : "#64748b", padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>{tg.groupId ? "💬 Grup ✓" : "💬 Grup ✕"}</span></>}
         </div>
