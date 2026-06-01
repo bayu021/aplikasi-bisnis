@@ -1,16 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 
-// ==================== UTILS ====================
+// ==================== UTILS & CONFIG ====================
 const formatRp = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
 const today = () => new Date().toISOString().slice(0, 10);
 
-// ==================== TELEGRAM HELPER ====================
-// (Lanjutkan dengan fungsi sendTelegram milikmu...)
+const CATEGORIES_IN = ["Penjualan", "Jasa", "Investasi", "Lainnya"];
+const CATEGORIES_OUT = ["Operasional", "Gaji", "Pembelian Stok", "Marketing", "Lainnya"];
+const PROJECT_STATUS = ["Pending", "Berjalan", "Selesai", "Ditunda"];
+const STATUS_COLOR = { Pending: "#f59e0b", Berjalan: "#3b82f6", Selesai: "#10b981", Ditunda: "#ef4444" };
 
-// FIX #1: Telegram — gunakan no-cors mode + fallback URL proxy agar tidak di-block CORS
+const loadLocal = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const saveLocal = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+
+// Helper Notifikasi Telegram aman dengan Try-Catch mendalam
 const sendTelegram = async (token, chatId, text) => {
-  if (!token || !chatId) return { ok: false, error: "Token/ChatID kosong" };
+  if (!token || !chatId) return { ok: false, error: "Token/ChatID tidak terkonfigurasi" };
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
     const res = await fetch(url, {
@@ -18,153 +23,46 @@ const sendTelegram = async (token, chatId, text) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
     });
-    const data = await res.json();
-    return data;
+    return await res.json();
   } catch (err) {
+    console.error("Gagal mengirim Telegram log:", err.message);
     return { ok: false, error: err.message };
   }
 };
 
-const CATEGORIES_IN = ["Penjualan", "Jasa", "Investasi", "Lainnya"];
-const CATEGORIES_OUT = ["Operasional", "Gaji", "Pembelian Stok", "Marketing", "Lainnya"];
-const PROJECT_STATUS = ["Pending", "Berjalan", "Selesai", "Ditunda"];
-const STATUS_COLOR = { Pending: "#f59e0b", Berjalan: "#3b82f6", Selesai: "#10b981", Ditunda: "#ef4444" };
-
-const load = (k, d) => { 
-  try { 
-    return JSON.parse(localStorage.getItem(k)) ?? d; 
-  } catch { 
-    return d; 
-  } 
-};
-
-// MODIFIKASI: Menambahkan pemicu keamanan jika data "biz" disimpan
-const save = (k, v) => {
-  localStorage.setItem(k, JSON.stringify(v));
-  if (k === "biz") {
-    console.log("Data bisnis disimpan, sinkronisasi ke cloud...");
-    // Di sini kita bisa menambahkan sinkronisasi ke Supabase jika diperlukan
-  }
-};
-
-
 // ==================== LOADING SCREEN ====================
 function LoadingScreen({ onDone }) {
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState(0);
-  const phases = ["Memuat sistem...", "Menginisialisasi data...", "Menyiapkan dashboard...", "Selesai!"];
-
   useEffect(() => {
     let p = 0;
     const iv = setInterval(() => {
-      p += Math.random() * 18 + 4;
-      if (p >= 100) { p = 100; clearInterval(iv); setTimeout(onDone, 500); }
+      p += Math.random() * 25 + 5;
+      if (p >= 100) { p = 100; clearInterval(iv); setTimeout(onDone, 400); }
       setProgress(Math.min(p, 100));
-      setPhase(Math.floor(Math.min(p, 99) / 25));
-    }, 120);
+    }, 80);
     return () => clearInterval(iv);
-  }, []);
+  }, [onDone]);
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "#0a0f1e",
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      zIndex: 99999, fontFamily: "'DM Sans','Segoe UI',sans-serif"
-    }}>
-      <style>{`
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-        @keyframes spin { to{transform:rotate(360deg)} }
-        @keyframes floatUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
-      `}</style>
-
-      {/* Animated logo */}
-      <div style={{ marginBottom: 40, animation: "floatUp 0.8s ease" }}>
-        <div style={{
-          width: 90, height: 90, borderRadius: 24,
-          background: "linear-gradient(135deg,#3b82f6,#8b5cf6)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 44, boxShadow: "0 0 60px #3b82f644",
-          marginBottom: 20
-        }}>💼</div>
-        <div style={{
-          textAlign: "center",
-          fontSize: 28, fontWeight: 800,
-          background: "linear-gradient(135deg,#3b82f6,#8b5cf6,#06b6d4)",
-          backgroundSize: "200% auto",
-          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          animation: "shimmer 2s linear infinite"
-        }}>BizFlow Pro</div>
-        <div style={{ color: "#475569", fontSize: 13, textAlign: "center", marginTop: 4 }}>Business Management System</div>
+    <div style={{ position: "fixed", inset: 0, background: "#0a0f1e", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 99999 }}>
+      <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <div style={{ width: 70, height: 70, borderRadius: 20, background: "linear-gradient(135deg,#3b82f6,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, margin: "0 auto 15px", boxShadow: "0 0 40px rgba(59,130,246,0.3)" }}>💼</div>
+        <h2 style={{ color: "#fff", margin: 0, fontSize: 24, letterSpacing: 1 }}>BizFlow Cloud</h2>
+        <p style={{ color: "#475569", fontSize: 12, margin: "4px 0 0" }}>Menyelaraskan data lokal & cloud...</p>
       </div>
-
-      {/* Progress bar */}
-      <div style={{ width: 280 }}>
-        <div style={{ background: "#1e293b", borderRadius: 99, height: 6, marginBottom: 16, overflow: "hidden" }}>
-          <div style={{
-            height: "100%", borderRadius: 99, width: `${progress}%`,
-            background: "linear-gradient(90deg,#3b82f6,#8b5cf6)",
-            transition: "width 0.15s ease", boxShadow: "0 0 12px #3b82f688"
-          }} />
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ color: "#64748b", fontSize: 13, animation: "pulse 1.5s infinite" }}>{phases[phase]}</span>
-          <span style={{ color: "#3b82f6", fontSize: 13, fontWeight: 700 }}>{Math.round(progress)}%</span>
-        </div>
-      </div>
-
-      {/* Dots */}
-      <div style={{ display: "flex", gap: 8, marginTop: 32 }}>
-        {[0,1,2].map(i => (
-          <div key={i} style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: "#3b82f6", opacity: 0.3,
-            animation: `pulse 1.2s ${i * 0.3}s infinite`
-          }} />
-        ))}
+      <div style={{ width: 200, background: "#1e293b", height: 4, borderRadius: 99, overflow: "hidden" }}>
+        <div style={{ width: `${progress}%`, background: "linear-gradient(90deg,#3b82f6,#8b5cf6)", height: "100%", transition: "width 0.1s" }} />
       </div>
     </div>
   );
 }
 
-// ==================== MINI CHART ====================
-function SparkLine({ data, color = "#3b82f6", height = 50 }) {
-  if (!data || data.length < 2) return null;
-  const max = Math.max(...data, 1), min = Math.min(...data, 0), range = max - min || 1;
-  const w = 200, h = height;
-  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`).join(" ");
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height }} preserveAspectRatio="none">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function BarChart({ labels, values, color = "#3b82f6" }) {
-  const max = Math.max(...values, 1);
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 80, padding: "0 4px" }}>
-      {values.map((v, i) => (
-        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-          <div style={{ width: "100%", background: color, borderRadius: 4, height: `${(v / max) * 64}px`, minHeight: v > 0 ? 4 : 0, transition: "height 0.5s ease" }} />
-          <span style={{ fontSize: 9, color: "#94a3b8", whiteSpace: "nowrap" }}>{labels[i]}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ==================== TOAST ====================
+// ==================== REUSABLE UI ELEMENTS ====================
 function Toast({ toasts }) {
   return (
-    <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ position: "fixed", top: 20, right: 20, zIndex: 99999, display: "flex", flexDirection: "column", gap: 8 }}>
       {toasts.map(t => (
-        <div key={t.id} style={{
-          background: t.type === "success" ? "#10b981" : t.type === "error" ? "#ef4444" : "#3b82f6",
-          color: "#fff", padding: "12px 18px", borderRadius: 10,
-          boxShadow: "0 4px 20px rgba(0,0,0,0.3)", fontSize: 14, fontWeight: 500,
-          animation: "slideIn 0.3s ease", maxWidth: 340
-        }}>
+        <div key={t.id} style={{ background: t.type === "success" ? "#10b981" : t.type === "error" ? "#ef4444" : "#3b82f6", color: "#fff", padding: "12px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}>
           {t.type === "success" ? "✅ " : t.type === "error" ? "❌ " : "ℹ️ "}{t.msg}
         </div>
       ))}
@@ -172,15 +70,14 @@ function Toast({ toasts }) {
   );
 }
 
-// ==================== MODAL ====================
 function Modal({ open, onClose, title, children }) {
   if (!open) return null;
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div style={{ background: "#1e293b", borderRadius: 16, padding: 28, width: "100%", maxWidth: 520, border: "1px solid #334155", boxShadow: "0 25px 60px rgba(0,0,0,0.5)" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h3 style={{ margin: 0, color: "#f1f5f9", fontSize: 18 }}>{title}</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 20 }}>✕</button>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(5,7,16,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#1e293b", borderRadius: 16, padding: 24, width: "100%", maxWidth: 480, border: "1px solid #334155" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ margin: 0, color: "#f1f5f9", fontSize: 16 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 18 }}>✕</button>
         </div>
         {children}
       </div>
@@ -188,2342 +85,474 @@ function Modal({ open, onClose, title, children }) {
   );
 }
 
-const inputStyle = { width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" };
-const labelStyle = { display: "block", color: "#94a3b8", fontSize: 12, marginBottom: 4, fontWeight: 600, letterSpacing: "0.05em" };
-const btnPrimary = { background: "linear-gradient(135deg, #3b82f6, #1d4ed8)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", cursor: "pointer", fontSize: 14, fontWeight: 600 };
-const btnDanger = { ...btnPrimary, background: "linear-gradient(135deg, #ef4444, #b91c1c)" };
-const btnSuccess = { ...btnPrimary, background: "linear-gradient(135deg, #10b981, #059669)" };
-function Field({ label, children }) { return <div style={{ marginBottom: 14 }}><label style={labelStyle}>{label}</label>{children}</div>; }
+const inputStyle = { width: "100%", padding: "10px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" };
+const btnStyle = { padding: "10px 16px", borderRadius: 8, border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" };
 
-// ==================== SIDEBAR ====================
-const NAV = [
-  { id: "dashboard", icon: "📊", label: "Dashboard" },
-  { id: "cashflow", icon: "💰", label: "Cash Flow" },
-  { id: "kasir", icon: "🛒", label: "Kasir" },
-  { id: "inventory", icon: "📦", label: "Stok Gudang" },
-  { id: "invoice", icon: "🧾", label: "Invoice" },
-  { id: "reports", icon: "📈", label: "Laporan" },
-  { id: "telegram", icon: "✈️", label: "Telegram Bot" },
-  { id: "owner", icon: "👑", label: "Owner" },
-  { id: "settings", icon: "⚙️", label: "Pengaturan" },
-];
-
-function Sidebar({ active, setActive, biz, sideOpen, setSideOpen }) {
-  return (
-    <>
-      {sideOpen && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 40 }} onClick={() => setSideOpen(false)} />}
-      <aside style={{ position: "fixed", left: sideOpen ? 0 : -260, top: 0, bottom: 0, width: 240, background: "#0f172a", borderRight: "1px solid #1e293b", zIndex: 50, transition: "left 0.3s ease", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "24px 20px 20px", borderBottom: "1px solid #1e293b" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {biz.logo
-              ? <img src={biz.logo} alt="logo" style={{ width: 40, height: 40, borderRadius: 10, objectFit: "cover" }} />
-              : <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>💼</div>}
-            <div>
-              <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 14 }}>{biz.name || "Bisnis Saya"}</div>
-              <div style={{ color: "#64748b", fontSize: 11 }}>{biz.owner || "Pemilik"}</div>
-            </div>
-          </div>
-        </div>
-        <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
-          {NAV.map(n => (
-            <button key={n.id} onClick={() => { setActive(n.id); setSideOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", borderRadius: 10, border: "none", cursor: "pointer", background: active === n.id ? "linear-gradient(135deg,#3b82f6,#1d4ed8)" : "none", color: active === n.id ? "#fff" : "#64748b", fontSize: 14, fontWeight: 500, marginBottom: 2, textAlign: "left" }}>
-              <span>{n.icon}</span><span>{n.label}</span>
-            </button>
-          ))}
-        </nav>
-        <div style={{ padding: 16, borderTop: "1px solid #1e293b", color: "#475569", fontSize: 11, textAlign: "center" }}>BizFlow Pro v2.0</div>
-      </aside>
-    </>
-  );
-}
-
-function StatCard({ label, value, icon, color, sparkData, sub }) {
-  return (
-    <div style={{ background: "#1e293b", borderRadius: 14, padding: "20px 22px", border: "1px solid #334155", position: "relative", overflow: "hidden" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ color: "#64748b", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
-          <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 700 }}>{value}</div>
-          {sub && <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>{sub}</div>}
-        </div>
-        <div style={{ width: 44, height: 44, borderRadius: 12, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{icon}</div>
-      </div>
-      {sparkData && <div style={{ marginTop: 12 }}><SparkLine data={sparkData} color={color} height={40} /></div>}
-    </div>
-  );
-}
-
-// ==================== DASHBOARD ====================
-function Dashboard({ income, expense, inventory, tg, biz }) {
-  const totalIn = income.reduce((s, r) => s + Number(r.amount), 0);
-  const totalOut = expense.reduce((s, r) => s + Number(r.amount), 0);
+// ==================== COMPONENT: DASHBOARD ====================
+function Dashboard({ income, expense, inventory, projects, biz }) {
+  const totalIn = income.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalOut = expense.reduce((s, r) => s + Number(r.amount || 0), 0);
   const profit = totalIn - totalOut;
-  const lowStock = inventory.filter(i => Number(i.qty) <= Number(i.minQty || 5));
-
-  // FIX #3: Laba bersih dari stok = harga jual - harga modal
-  const netProfitFromStock = income
-    .filter(r => r.fromStock)
-    .reduce((s, r) => s + (Number(r.amount) - Number(r.costAmount || 0)), 0);
-
-  const months = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Ags","Sep","Okt","Nov","Des"];
-  const nowM = new Date().getMonth();
-  const last6 = Array.from({ length: 6 }, (_, i) => months[(nowM - 5 + i + 12) % 12]);
-  const inData = last6.map((_, i) => { const m = (nowM - 5 + i + 12) % 12; return income.filter(r => new Date(r.date).getMonth() === m).reduce((s, r) => s + Number(r.amount), 0); });
-  const outData = last6.map((_, i) => { const m = (nowM - 5 + i + 12) % 12; return expense.filter(r => new Date(r.date).getMonth() === m).reduce((s, r) => s + Number(r.amount), 0); });
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ color: "#f1f5f9", margin: 0, fontSize: 24, fontWeight: 700 }}>Selamat datang, {biz.owner || "Pengguna"} 👋</h2>
-        <p style={{ color: "#64748b", margin: "4px 0 0" }}>Ringkasan bisnis Anda hari ini</p>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 22, color: "#f1f5f9" }}>Workshop {biz.name || "Sumber Rezeki"} 🛠️</h2>
+        <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>Pemilik: {biz.owner || "Mochamad Budi"}</p>
       </div>
-
-      {lowStock.length > 0 && (
-        <div style={{ background: "#7f1d1d22", border: "1px solid #ef444444", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#fca5a5", fontSize: 14 }}>
-          ⚠️ <strong>{lowStock.length} barang</strong> stok menipis: {lowStock.map(i => i.name).join(", ")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+        <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>TOTAL PEMASUKAN</div>
+          <div style={{ color: "#10b981", fontSize: 20, fontWeight: 700, marginTop: 4 }}>{formatRp(totalIn)}</div>
         </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 16, marginBottom: 24 }}>
-        <StatCard label="TOTAL PEMASUKAN" value={formatRp(totalIn)} icon="📈" color="#10b981" sparkData={inData} />
-        <StatCard label="TOTAL PENGELUARAN" value={formatRp(totalOut)} icon="📉" color="#ef4444" sparkData={outData} />
-        <StatCard label="NET CASH FLOW" value={formatRp(profit)} icon="💵" color={profit >= 0 ? "#3b82f6" : "#f59e0b"} />
-        <StatCard label="LABA BERSIH PENJUALAN" value={formatRp(netProfitFromStock)} icon="💹" color="#8b5cf6" sub="Harga Jual - Modal" />
-        <StatCard label="TOTAL PENJUALAN" value={income.filter(r => r.fromStock).length + " transaksi"} icon="🛒" color="#06b6d4" />
-        <StatCard label="TOTAL PRODUK" value={inventory.length} icon="📦" color="#f59e0b" />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>📊 Pemasukan 6 Bulan</h4>
-          <BarChart labels={last6} values={inData} color="#10b981" />
+        <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>TOTAL PENGELUARAN</div>
+          <div style={{ color: "#ef4444", fontSize: 20, fontWeight: 700, marginTop: 4 }}>{formatRp(totalOut)}</div>
         </div>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>📊 Pengeluaran 6 Bulan</h4>
-          <BarChart labels={last6} values={outData} color="#ef4444" />
+        <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>SALDO BERSIH (NET)</div>
+          <div style={{ color: profit >= 0 ? "#3b82f6" : "#f59e0b", fontSize: 20, fontWeight: 700, marginTop: 4 }}>{formatRp(profit)}</div>
         </div>
-      </div>
-
-      <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-        <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>🕐 Transaksi Terbaru</h4>
-        {[...income.map(r => ({ ...r, type: "in" })), ...expense.map(r => ({ ...r, type: "out" }))]
-          .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)
-          .map((r, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #0f172a" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: r.type === "in" ? "#10b98122" : "#ef444422", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {r.fromStock ? "📦" : r.type === "in" ? "📈" : "📉"}
-                </div>
-                <div>
-                  <div style={{ color: "#f1f5f9", fontSize: 14 }}>{r.desc || r.category}</div>
-                  <div style={{ color: "#64748b", fontSize: 12 }}>{r.date} · {r.category}{r.fromStock ? " · Penjualan Stok" : ""}</div>
-                </div>
-              </div>
-              <div style={{ color: r.type === "in" ? "#10b981" : "#ef4444", fontWeight: 700, fontSize: 15 }}>
-                {r.type === "in" ? "+" : "-"}{formatRp(r.amount)}
-              </div>
-            </div>
-          ))}
-        {income.length === 0 && expense.length === 0 && <div style={{ color: "#64748b", textAlign: "center", padding: "20px 0" }}>Belum ada transaksi</div>}
       </div>
     </div>
   );
 }
 
-// ==================== CASHFLOW ====================
-function CashFlow({ income, setIncome, expense, setExpense, inventory, setInventory, tg, biz, addToast }) {
+// ==================== COMPONENT: KASIR ====================
+function Kasir({ inventory, setInventory, income, setIncome, addToast, tg, biz, saveAndSync }) {
+  const [cart, setCart] = useState([]);
+  const [payAmount, setPayAmount] = useState("");
+
+  const addToCart = (item) => {
+    if (item.qty <= 0) return addToast("Stok barang ini habis!", "error");
+    const exist = cart.find(c => c.id === item.id);
+    if (exist) {
+      if (exist.cartQty >= item.qty) return addToast("Tidak bisa melebihi stok tersedia", "error");
+      setCart(cart.map(c => c.id === item.id ? { ...c, cartQty: c.cartQty + 1 } : c));
+    } else {
+      setCart([...cart, { ...item, cartQty: 1 }]);
+    }
+  };
+
+  const updateCartQty = (id, val) => {
+    const item = inventory.find(i => i.id === id);
+    if (val > item.qty) return addToast("Stok tidak mencukupi", "error");
+    if (val <= 0) {
+      setCart(cart.filter(c => c.id !== id));
+    } else {
+      setCart(cart.map(c => c.id === id ? { ...c, cartQty: val } : c));
+    }
+  };
+
+  const totalBelanja = cart.reduce((s, c) => s + (Number(c.sellPrice) * c.cartQty), 0);
+
+  const handleCheckout = async () => {
+    if (cart.length === 0) return addToast("Keranjang belanja kosong", "error");
+    if (Number(payAmount) < totalBelanja) return addToast("Uang pembayaran kurang!", "error");
+
+    // FIX #4: Menggunakan Functional State Update yang aman dari Race-Condition stok hancur
+    const newInventory = inventory.map(invItem => {
+      const cartItem = cart.find(c => c.id === invItem.id);
+      if (cartItem) {
+        return { ...invItem, qty: Math.max(0, Number(invItem.qty) - cartItem.cartQty) };
+      }
+      return invItem;
+    });
+
+    const newTransaction = {
+      id: Date.now(),
+      date: today(),
+      category: "Penjualan",
+      desc: `Kasir: ${cart.map(c => `${c.name} (${c.cartQty}x)`).join(", ")}`,
+      amount: totalBelanja
+    };
+
+    setInventory(newInventory);
+    const updatedIncome = [newTransaction, ...income];
+    setIncome(updatedIncome);
+
+    // Kirim data sinkronisasi ganda (Dual-layer cloud)
+    saveAndSync("inventory", newInventory);
+    saveAndSync("income", updatedIncome);
+
+    addToast("Transaksi Kasir Berhasil disimpan!", "success");
+    
+    // Kirim Laporan ke Bot Telegram
+    await sendTelegram(tg.token, tg.chatId, `🛒 <b>Transaksi Kasir Baru</b>\n🏢 ${biz.name}\n💰 Total: ${formatRp(totalBelanja)}\n💵 Bayar: ${formatRp(payAmount)}\n kembalian: ${formatRp(Number(payAmount) - totalBelanja)}`);
+
+    setCart([]);
+    setPayAmount("");
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16 }}>
+      {/* List Produk */}
+      <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
+        <h3 style={{ margin: "0 0 12px", color: "#f1f5f9", fontSize: 15 }}>🛒 Menu Produk Kasir</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+          {inventory.map(item => (
+            <div key={item.id} onClick={() => addToCart(item)} style={{ background: "#0f172a", padding: 12, borderRadius: 8, cursor: "pointer", border: "1px solid #1e293b" }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "#f1f5f9" }}>{item.name}</div>
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>Stok: {item.qty}</div>
+              <div style={{ color: "#10b981", fontSize: 13, fontWeight: 700, marginTop: 6 }}>{formatRp(item.sellPrice)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Ringkasan Keranjang */}
+      <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155", display: "flex", flexDirection: "column" }}>
+        <h3 style={{ margin: "0 0 12px", color: "#f1f5f9", fontSize: 15 }}>📋 Keranjang</h3>
+        <div style={{ flex: 1, overflowY: "auto", marginBottom: 12 }}>
+          {cart.map(c => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, background: "#0f172a", padding: 8, borderRadius: 6 }}>
+              <div>
+                <div style={{ fontSize: 12, color: "#f1f5f9" }}>{c.name}</div>
+                <div style={{ fontSize: 11, color: "#10b981" }}>{formatRp(c.sellPrice)}</div>
+              </div>
+              <input type="number" min="0" value={c.cartQty} onChange={(e) => updateCartQty(c.id, Number(e.target.value))} style={{ width: 50, background: "#1e293b", border: "1px solid #334155", color: "#fff", padding: 4, borderRadius: 4, textAlign: "center" }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ borderTop: "1px solid #334155", paddingTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: "#fff" }}>
+            <span>Total:</span><span>{formatRp(totalBelanja)}</span>
+          </div>
+          <input type="number" min="0" style={{ ...inputStyle, marginTop: 10 }} placeholder="Uang Bayar Tunai..." value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+          <button onClick={handleCheckout} style={{ ...btnStyle, background: "#10b981", color: "#fff", width: "100%", marginTop: 10 }}>Selesaikan Transaksi</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== COMPONENT: CASHFLOW ====================
+function CashFlow({ income, setIncome, expense, setExpense, addToast, saveAndSync }) {
   const [tab, setTab] = useState("in");
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ date: today(), category: "", desc: "", amount: "" });
-  const [selectedStockItem, setSelectedStockItem] = useState("");
-  const [stockQty, setStockQty] = useState("");
-
-  const totalIn = income.reduce((s, r) => s + Number(r.amount), 0);
-  const totalOut = expense.reduce((s, r) => s + Number(r.amount), 0);
-
-  const isPembelianStok = tab === "out" && form.category === "Pembelian Stok";
-
-  const handleCategoryChange = (val) => {
-    setForm({ ...form, category: val });
-    if (val !== "Pembelian Stok") {
-      setSelectedStockItem("");
-      setStockQty("");
-    }
-  };
-
-  const handleStockItemChange = (itemId) => {
-    setSelectedStockItem(itemId);
-    const item = inventory.find(i => String(i.id) === String(itemId));
-    if (item) {
-      const total = item.costPrice && stockQty ? Number(item.costPrice) * Number(stockQty) : "";
-      setForm(f => ({ ...f, amount: total !== "" ? String(total) : "", desc: f.desc || `Pembelian stok: ${item.name}` }));
-    }
-  };
-
-  const submit = async () => {
-    if (!form.category) return addToast("Lengkapi semua field!", "error");
-
-    // Validasi pembelian stok
-    if (isPembelianStok) {
-      if (!selectedStockItem) return addToast("Pilih barang stok yang dibeli!", "error");
-      if (!stockQty || Number(stockQty) <= 0) return addToast("Masukkan jumlah stok yang dibeli!", "error");
-    }
-
-    // Hitung ulang total nominal untuk pembelian stok: costPrice × qty
-    let finalAmount = form.amount;
-    if (isPembelianStok && selectedStockItem && stockQty) {
-      const item = inventory.find(i => String(i.id) === String(selectedStockItem));
-      if (item && item.costPrice) {
-        finalAmount = String(Number(item.costPrice) * Number(stockQty));
-      }
-    }
-
-    if (!finalAmount) return addToast("Lengkapi nominal!", "error");
-    const rec = { ...form, amount: finalAmount, id: Date.now() };
-    if (tab === "in") {
-      const updated = [rec, ...income]; setIncome(updated); save("income", updated);
-      const msg = `📢 <b>Pemasukan Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💰 ${formatRp(form.amount)}\n📅 ${form.date}`;
-      const res = await sendTelegram(tg.token, tg.chatId, msg);
-      if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
-    } else {
-      const updated = [rec, ...expense]; setExpense(updated); save("expense", updated);
-
-      // Jika pembelian stok → update stok barang yang dipilih
-      if (isPembelianStok && selectedStockItem) {
-        const qty = Number(stockQty);
-        const item = inventory.find(i => String(i.id) === String(selectedStockItem));
-        const updatedInventory = inventory.map(i => {
-          if (String(i.id) !== String(selectedStockItem)) return i;
-          const newQty = Number(i.qty) + qty;
-          const hist = [...(i.history || []), { type: "in", qty, date: today(), note: `Pembelian stok via Cash Flow - ${formatRp(form.amount)}` }];
-          return { ...i, qty: newQty, history: hist };
-        });
-        setInventory(updatedInventory);
-        save("inventory", updatedInventory);
-        addToast(`Stok ${item?.name} bertambah ${qty} unit!`, "success");
-
-        const msg = `📢 <b>Pembelian Stok</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${item?.name || "-"}\n🔢 Qty: +${qty}\n💸 ${formatRp(finalAmount)}\n📅 ${form.date}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
-        if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
-      } else {
-        const msg = `📢 <b>Pengeluaran Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💸 ${formatRp(form.amount)}\n📅 ${form.date}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
-        if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
-      }
-    }
-    setForm({ date: today(), category: "", desc: "", amount: "" });
-    setSelectedStockItem("");
-    setStockQty("");
-    setShowModal(false);
-    addToast("Transaksi berhasil ditambahkan!", "success");
-  };
-
-  const del = (id) => {
-    if (tab === "in") { const u = income.filter(r => r.id !== id); setIncome(u); save("income", u); }
-    else { const u = expense.filter(r => r.id !== id); setExpense(u); save("expense", u); }
-    addToast("Transaksi dihapus", "info");
-  };
-
-  const data = tab === "in" ? income : expense;
-  const cats = tab === "in" ? CATEGORIES_IN : CATEGORIES_OUT;
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ color: "#f1f5f9", margin: 0, fontSize: 22 }}>💰 Manajemen Cash Flow</h2>
-        <button style={btnPrimary} onClick={() => setShowModal(true)}>+ Tambah</button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, border: "1px solid #334155", textAlign: "center" }}>
-          <div style={{ color: "#10b981", fontSize: 20, fontWeight: 700 }}>{formatRp(totalIn)}</div>
-          <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>Total Pemasukan</div>
-        </div>
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, border: "1px solid #334155", textAlign: "center" }}>
-          <div style={{ color: "#ef4444", fontSize: 20, fontWeight: 700 }}>{formatRp(totalOut)}</div>
-          <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>Total Pengeluaran</div>
-        </div>
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, border: "1px solid #334155", textAlign: "center" }}>
-          <div style={{ color: totalIn - totalOut >= 0 ? "#3b82f6" : "#f59e0b", fontSize: 20, fontWeight: 700 }}>{formatRp(totalIn - totalOut)}</div>
-          <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>Net Cash Flow</div>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {["in", "out"].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, background: tab === t ? (t === "in" ? "#10b981" : "#ef4444") : "#1e293b", color: tab === t ? "#fff" : "#64748b" }}>
-            {t === "in" ? "📈 Pemasukan" : "📉 Pengeluaran"}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ background: "#1e293b", borderRadius: 14, border: "1px solid #334155", overflow: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              {["Tanggal", "Kategori", "Deskripsi", "Nominal", "Sumber", ""].map(h => (
-                <th key={h} style={{ padding: "12px 16px", color: "#64748b", fontSize: 12, fontWeight: 600, textAlign: "left" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map(r => (
-              <tr key={r.id} style={{ borderTop: "1px solid #0f172a" }}>
-                <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: 13 }}>{r.date}</td>
-                <td style={{ padding: "12px 16px" }}><span style={{ background: "#334155", color: "#94a3b8", padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>{r.category}</span></td>
-                <td style={{ padding: "12px 16px", color: "#f1f5f9", fontSize: 13 }}>{r.desc || "-"}</td>
-                <td style={{ padding: "12px 16px", color: tab === "in" ? "#10b981" : "#ef4444", fontWeight: 700, fontSize: 14 }}>{tab === "in" ? "+" : "-"}{formatRp(r.amount)}</td>
-                <td style={{ padding: "12px 16px" }}>
-                  {r.fromStock ? <span style={{ background: "#8b5cf622", color: "#8b5cf6", padding: "2px 8px", borderRadius: 12, fontSize: 11 }}>📦 Stok</span> : <span style={{ color: "#475569", fontSize: 11 }}>Manual</span>}
-                </td>
-                <td style={{ padding: "12px 16px" }}>
-                  <button onClick={() => del(r.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 16 }}>🗑️</button>
-                </td>
-              </tr>
-            ))}
-            {data.length === 0 && <tr><td colSpan={6} style={{ padding: 32, textAlign: "center", color: "#475569" }}>Belum ada data</td></tr>}
-          </tbody>
-        </table>
-      </div>
-
-      <Modal open={showModal} onClose={() => { setShowModal(false); setSelectedStockItem(""); setStockQty(""); }} title={tab === "in" ? "➕ Tambah Pemasukan" : "➕ Tambah Pengeluaran"}>
-        <Field label="TANGGAL"><input type="date" style={inputStyle} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label="KATEGORI">
-          <select style={inputStyle} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
-            <option value="">Pilih kategori</option>
-            {cats.map(c => <option key={c}>{c}</option>)}
-          </select>
-        </Field>
-
-        {isPembelianStok && (
-          <div style={{ background: "#0f172a", border: "1px solid #3b82f644", borderRadius: 10, padding: 14, marginBottom: 14 }}>
-            <div style={{ color: "#3b82f6", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>📦 Pilih Barang Stok</div>
-            <Field label="BARANG STOK">
-              <select style={inputStyle} value={selectedStockItem} onChange={e => handleStockItemChange(e.target.value)}>
-                <option value="">-- Pilih barang dari stok --</option>
-                {inventory.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}{item.sku ? ` (${item.sku})` : ""} — Stok: {item.qty} {item.category ? `· ${item.category}` : ""}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {selectedStockItem && (() => {
-              const item = inventory.find(i => String(i.id) === String(selectedStockItem));
-              return item ? (
-                <div style={{ background: "#1e293b", borderRadius: 8, padding: "10px 12px", marginBottom: 10, fontSize: 13 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ color: "#94a3b8" }}>Stok saat ini:</span>
-                    <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{item.qty} unit</span>
-                  </div>
-                  {item.costPrice && <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ color: "#94a3b8" }}>Harga modal/unit:</span>
-                    <span style={{ color: "#f59e0b", fontWeight: 600 }}>{formatRp(item.costPrice)}</span>
-                  </div>}
-                  {item.supplier && <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "#94a3b8" }}>Supplier:</span>
-                    <span style={{ color: "#64748b" }}>{item.supplier}</span>
-                  </div>}
-                </div>
-              ) : null;
-            })()}
-            <Field label="JUMLAH UNIT YANG DIBELI">
-              <input type="number" style={inputStyle} placeholder="Masukkan jumlah unit" min="1"
-                value={stockQty}
-                onChange={e => {
-                  setStockQty(e.target.value);
-                  const item = inventory.find(i => String(i.id) === String(selectedStockItem));
-                  if (item && item.costPrice && e.target.value) {
-                    setForm(f => ({ ...f, amount: String(Number(item.costPrice) * Number(e.target.value)) }));
-                  }
-                }}
-              />
-            </Field>
-          </div>
-        )}
-
-        <Field label="DESKRIPSI"><input style={inputStyle} placeholder="Deskripsi transaksi" value={form.desc} onChange={e => setForm({ ...form, desc: e.target.value })} /></Field>
-        <Field label={isPembelianStok ? "TOTAL NOMINAL (RP) — auto hitung dari harga modal × qty" : "NOMINAL (RP)"}>
-          <input type="number" style={inputStyle} placeholder="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
-        </Field>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-          <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => { setShowModal(false); setSelectedStockItem(""); setStockQty(""); }}>Batal</button>
-          <button style={tab === "in" ? btnSuccess : btnDanger} onClick={submit}>Simpan</button>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-// ==================== KASIR ====================
-function Kasir({ income, setIncome, inventory, setInventory, tg, biz, addToast }) {
-  const [cart, setCart] = useState([]);
-  const [selectedItem, setSelectedItem] = useState("");
-  const [qty, setQty] = useState(1);
-  const [customerName, setCustomerName] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("Tunai");
-  const [showReceipt, setShowReceipt] = useState(false);
-  const [lastTx, setLastTx] = useState(null);
-
-  const availableItems = inventory.filter(i => Number(i.qty) > 0 && Number(i.sellPrice) > 0);
-
-  const addToCart = () => {
-    if (!selectedItem) return addToast("Pilih barang terlebih dahulu!", "error");
-    const item = inventory.find(i => String(i.id) === String(selectedItem));
-    if (!item) return;
-    const maxQty = Number(item.qty);
-    const cartExisting = cart.find(c => String(c.id) === String(selectedItem));
-    const alreadyInCart = cartExisting ? cartExisting.qty : 0;
-    if (alreadyInCart + qty > maxQty) return addToast(`Stok ${item.name} tidak cukup! Tersedia: ${maxQty - alreadyInCart}`, "error");
-
-    if (cartExisting) {
-      setCart(cart.map(c => String(c.id) === String(selectedItem) ? { ...c, qty: c.qty + qty } : c));
-    } else {
-      setCart([...cart, { id: item.id, name: item.name, sellPrice: Number(item.sellPrice), costPrice: Number(item.costPrice || 0), qty, sku: item.sku }]);
-    }
-    setSelectedItem(""); setQty(1);
-  };
-
-  const removeFromCart = (id) => setCart(cart.filter(c => String(c.id) !== String(id)));
-  const updateCartQty = (id, newQty) => {
-    if (newQty <= 0) return removeFromCart(id);
-    const item = inventory.find(i => String(i.id) === String(id));
-    if (item && newQty > Number(item.qty)) return addToast("Melebihi stok tersedia!", "error");
-    setCart(cart.map(c => String(c.id) === String(id) ? { ...c, qty: newQty } : c));
-  };
-
-  const subtotal = cart.reduce((s, c) => s + c.sellPrice * c.qty, 0);
-  const totalCost = cart.reduce((s, c) => s + c.costPrice * c.qty, 0);
-  const netProfit = subtotal - totalCost;
-
-  const checkout = async () => {
-        // SUNTIKKAN PROTEKSI COOLDOWN CLOUD DI SINI
-    if (cloudSettings.is_cooldown_active) {
-      addToast("🔒 Transaksi dibekukan! Toko dalam mode Cooldown 24 Jam.", "error");
-      return;
-    }
-    
-    if (cart.length === 0) return addToast("Keranjang kosong!", "error");
-
-    const txId = Date.now();
-    const txDate = today();
-
-    // Update inventory stok
-    const updatedInventory = inventory.map(item => {
-      const cartItem = cart.find(c => String(c.id) === String(item.id));
-      if (!cartItem) return item;
-      const newQty = Math.max(0, Number(item.qty) - cartItem.qty);
-      const hist = [...(item.history || []), { type: "out", qty: cartItem.qty, date: txDate, note: `Penjualan kasir${customerName ? " - " + customerName : ""}` }];
-      return { ...item, qty: newQty, history: hist };
-    });
-    setInventory(updatedInventory); save("inventory", updatedInventory);
-
-    // Catat ke income
-    const saleRecord = {
-      id: txId, date: txDate, category: "Penjualan",
-      desc: `Kasir: ${cart.map(c => c.qty + "x " + c.name).join(", ")}${customerName ? " · " + customerName : ""}`,
-      amount: subtotal, fromStock: true,
-      costAmount: totalCost, grossProfit: netProfit,
-      paymentMethod, customerName, items: cart,
-    };
-    const updatedIncome = [saleRecord, ...income];
-    setIncome(updatedIncome); save("income", updatedIncome);
-
-    // Telegram
-    const itemLines = cart.map(c => `  • ${c.qty}x ${c.name} @ ${formatRp(c.sellPrice)} = ${formatRp(c.sellPrice * c.qty)}`).join("\n");
-    const msg = `🛒 <b>Penjualan Kasir</b>\n🏢 ${biz.name || "Bisnis"}\n${customerName ? "👤 " + customerName + "\n" : ""}${itemLines}\n━━━━━━━━━━\n💰 Total: ${formatRp(subtotal)}\n💳 ${paymentMethod}\n💹 Laba Bersih: ${formatRp(netProfit)}\n📅 ${txDate}`;
-    const res = await sendTelegram(tg.token, tg.chatId, msg);
-    if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
-
-    setLastTx({ ...saleRecord, subtotal, netProfit });
-    setShowReceipt(true);
-    setCart([]); setCustomerName(""); setPaymentMethod("Tunai");
-    addToast(`Transaksi berhasil! Total: ${formatRp(subtotal)}`, "success");
-  };
-
-  const recentSales = income.filter(r => r.fromStock && r.items).slice(0, 8);
-
-  return (
-    <div>
-      <h2 style={{ color: "#f1f5f9", margin: "0 0 24px", fontSize: 22 }}>🛒 Kasir</h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 20, alignItems: "start" }}>
-        {/* Kiri: pilih barang */}
-        <div>
-          {/* Input tambah barang */}
-          <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155", marginBottom: 16 }}>
-            <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>➕ Tambah Barang</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "end" }}>
-              <Field label="PILIH BARANG">
-                <select style={inputStyle} value={selectedItem} onChange={e => setSelectedItem(e.target.value)}>
-                  <option value="">-- Pilih barang --</option>
-                  {availableItems.map(item => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}{item.sku ? ` (${item.sku})` : ""} — Stok: {item.qty} — {formatRp(item.sellPrice)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="QTY">
-                <input type="number" style={{ ...inputStyle, width: 80 }} min="1" value={qty} onChange={e => setQty(Math.max(1, Number(e.target.value)))} />
-              </Field>
-              <button style={{ ...btnPrimary, marginBottom: 14 }} onClick={addToCart}>+ Tambah</button>
-            </div>
-            {selectedItem && (() => {
-              const item = inventory.find(i => String(i.id) === String(selectedItem));
-              return item ? (
-                <div style={{ background: "#0f172a", borderRadius: 8, padding: "10px 14px", fontSize: 13, display: "flex", gap: 20 }}>
-                  <span style={{ color: "#94a3b8" }}>Stok: <b style={{ color: "#f1f5f9" }}>{item.qty}</b></span>
-                  <span style={{ color: "#94a3b8" }}>Harga Jual: <b style={{ color: "#10b981" }}>{formatRp(item.sellPrice)}</b></span>
-                  <span style={{ color: "#94a3b8" }}>Modal: <b style={{ color: "#f59e0b" }}>{formatRp(item.costPrice)}</b></span>
-                </div>
-              ) : null;
-            })()}
-          </div>
-
-          {/* Tabel keranjang */}
-          <div style={{ background: "#1e293b", borderRadius: 14, border: "1px solid #334155", overflow: "auto", marginBottom: 16 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#0f172a" }}>
-                  {["Barang", "Harga", "Qty", "Subtotal", ""].map(h => (
-                    <th key={h} style={{ padding: "12px 16px", color: "#64748b", fontSize: 12, fontWeight: 600, textAlign: "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {cart.map(c => (
-                  <tr key={c.id} style={{ borderTop: "1px solid #0f172a" }}>
-                    <td style={{ padding: "12px 16px", color: "#f1f5f9", fontSize: 14 }}>{c.name}{c.sku ? <span style={{ color: "#64748b", fontSize: 11, marginLeft: 6 }}>({c.sku})</span> : ""}</td>
-                    <td style={{ padding: "12px 16px", color: "#10b981", fontSize: 13 }}>{formatRp(c.sellPrice)}</td>
-                    <td style={{ padding: "10px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <button onClick={() => updateCartQty(c.id, c.qty - 1)} style={{ background: "#334155", border: "none", color: "#f1f5f9", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontSize: 16 }}>−</button>
-                        <span style={{ color: "#f1f5f9", fontWeight: 700, minWidth: 24, textAlign: "center" }}>{c.qty}</span>
-                        <button onClick={() => updateCartQty(c.id, c.qty + 1)} style={{ background: "#334155", border: "none", color: "#f1f5f9", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontSize: 16 }}>+</button>
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "#f1f5f9", fontWeight: 700 }}>{formatRp(c.sellPrice * c.qty)}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <button onClick={() => removeFromCart(c.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 16 }}>🗑️</button>
-                    </td>
-                  </tr>
-                ))}
-                {cart.length === 0 && <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#475569" }}>Keranjang kosong</td></tr>}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Riwayat penjualan */}
-          <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-            <h4 style={{ color: "#f1f5f9", margin: "0 0 14px", fontSize: 15 }}>🕐 Riwayat Penjualan Terakhir</h4>
-            {recentSales.length === 0 && <div style={{ color: "#475569", textAlign: "center", padding: "16px 0" }}>Belum ada transaksi</div>}
-            {recentSales.map(r => (
-              <div key={r.id} style={{ borderBottom: "1px solid #0f172a", padding: "10px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600 }}>{r.customerName || "Umum"} <span style={{ color: "#64748b", fontWeight: 400 }}>· {r.paymentMethod || "Tunai"}</span></div>
-                  <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>{r.date} · {r.items?.length || 0} item</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ color: "#10b981", fontWeight: 700 }}>{formatRp(r.amount)}</div>
-                  <div style={{ color: "#8b5cf6", fontSize: 12 }}>Laba: {formatRp(r.grossProfit || 0)}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Kanan: ringkasan & checkout */}
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155", position: "sticky", top: 80 }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 16 }}>🧾 Ringkasan Transaksi</h4>
-
-          <Field label="NAMA PELANGGAN (OPSIONAL)">
-            <input style={inputStyle} placeholder="Nama pelanggan..." value={customerName} onChange={e => setCustomerName(e.target.value)} />
-          </Field>
-          <Field label="METODE PEMBAYARAN">
-            <select style={inputStyle} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              {["Tunai", "Transfer", "QRIS", "Kartu Debit", "Kartu Kredit"].map(m => <option key={m}>{m}</option>)}
-            </select>
-          </Field>
-
-          <div style={{ borderTop: "1px solid #334155", paddingTop: 16, marginTop: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ color: "#64748b", fontSize: 14 }}>Total Item</span>
-              <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{cart.reduce((s, c) => s + c.qty, 0)} unit</span>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20, paddingTop: 12, borderTop: "1px solid #334155" }}>
-              <span style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 16 }}>TOTAL</span>
-              <span style={{ color: "#10b981", fontWeight: 800, fontSize: 20 }}>{formatRp(subtotal)}</span>
-            </div>
-            <button style={{ ...btnSuccess, width: "100%", padding: "14px", fontSize: 16, opacity: cart.length === 0 ? 0.5 : 1 }} onClick={checkout} disabled={cart.length === 0}>
-              ✅ Bayar & Selesai
-            </button>
-            {cart.length > 0 && (
-              <button style={{ ...btnPrimary, background: "#334155", width: "100%", padding: "10px", fontSize: 13, marginTop: 8 }} onClick={() => setCart([])}>
-                🗑️ Kosongkan Keranjang
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Modal Struk */}
-      <Modal open={showReceipt} onClose={() => setShowReceipt(false)} title="🧾 Struk Pembayaran">
-        {lastTx && (
-          <div>
-            <div style={{ textAlign: "center", marginBottom: 16 }}>
-              <div style={{ color: "#10b981", fontSize: 32, marginBottom: 8 }}>✅</div>
-              <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 18 }}>Pembayaran Berhasil!</div>
-              {lastTx.customerName && <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>👤 {lastTx.customerName}</div>}
-              <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>{lastTx.date} · {lastTx.paymentMethod}</div>
-            </div>
-            <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 16 }}>
-              {lastTx.items?.map((c, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e293b", fontSize: 13 }}>
-                  <span style={{ color: "#94a3b8" }}>{c.qty}x {c.name}</span>
-                  <span style={{ color: "#f1f5f9" }}>{formatRp(c.sellPrice * c.qty)}</span>
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 12, marginTop: 4 }}>
-                <span style={{ color: "#f1f5f9", fontWeight: 700 }}>TOTAL</span>
-                <span style={{ color: "#10b981", fontWeight: 800, fontSize: 18 }}>{formatRp(lastTx.subtotal)}</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={btnPrimary} onClick={() => setShowReceipt(false)}>Tutup</button>
-            </div>
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
-// ==================== INVENTORY ====================
-// FIX #2 & #3: Saat stok keluar → otomatis tambah ke pemasukan dengan harga jual,
-// laba bersih = harga jual - harga modal dicatat di record
-function Inventory({ inventory, setInventory, income, setIncome, expense, setExpense, tg, biz, addToast }) {
-  const [showModal, setShowModal] = useState(false);
-  const [showTxModal, setShowTxModal] = useState(false);
-  const [txItem, setTxItem] = useState(null);
-  const [txType, setTxType] = useState("in");
-  const [txQty, setTxQty] = useState("");
-  const [txNote, setTxNote] = useState("");
-  const [form, setForm] = useState({ name: "", sku: "", category: "", qty: "", minQty: "5", costPrice: "", sellPrice: "", supplier: "" });
 
   const submit = () => {
-    if (!form.name || !form.qty) return addToast("Nama & jumlah stok wajib!", "error");
-    const rec = { ...form, id: Date.now(), history: [] };
-    const updated = [rec, ...inventory]; setInventory(updated); save("inventory", updated);
-    setForm({ name: "", sku: "", category: "", qty: "", minQty: "5", costPrice: "", sellPrice: "", supplier: "" });
+    // FIX #5: Sanitasi Input Anti-Negatif
+    if (!form.amount || Number(form.amount) <= 0 || !form.category) return addToast("Isi nominal dengan benar & pilih kategori!", "error");
+    
+    const rec = { ...form, id: Date.now(), amount: Number(form.amount) };
+    if (tab === "in") {
+      const updated = [rec, ...income];
+      setIncome(updated);
+      saveAndSync("income", updated);
+    } else {
+      const updated = [rec, ...expense];
+      setExpense(updated);
+      saveAndSync("expense", updated);
+    }
+    setForm({ date: today(), category: "", desc: "", amount: "" });
     setShowModal(false);
-    addToast("Barang berhasil ditambahkan!", "success");
+    addToast("Data arus kas berhasil dicatat!", "success");
   };
-
-  const doTx = async () => {
-    if (!txQty || Number(txQty) <= 0) return addToast("Jumlah harus lebih dari 0!", "error");
-    const qty = Number(txQty);
-
-    // Update inventory
-    const updatedInventory = inventory.map(i => {
-      if (i.id !== txItem.id) return i;
-      const newQty = txType === "in" ? Number(i.qty) + qty : Math.max(0, Number(i.qty) - qty);
-      const hist = [...(i.history || []), { type: txType, qty, date: today(), note: txNote }];
-      return { ...i, qty: newQty, history: hist };
-    });
-    setInventory(updatedInventory); save("inventory", updatedInventory);
-
-    const item = updatedInventory.find(i => i.id === txItem.id);
-
-    // FIX #2: Stok keluar → otomatis masuk sebagai Penjualan di Cash Flow
-    if (txType === "out") {
-      const sellPrice = Number(txItem.sellPrice || 0);
-      const costPrice = Number(txItem.costPrice || 0);
-      const totalSell = sellPrice * qty;
-      const totalCost = costPrice * qty;
-      const grossProfit = totalSell - totalCost;
-
-      if (sellPrice > 0) {
-        const saleRecord = {
-          id: Date.now(),
-          date: today(),
-          category: "Penjualan",
-          desc: `Penjualan ${qty}x ${txItem.name}${txNote ? " - " + txNote : ""}`,
-          amount: totalSell,
-          fromStock: true,
-          itemId: txItem.id,
-          itemName: txItem.name,
-          qty,
-          sellPrice,
-          costPrice,
-          costAmount: totalCost,  // untuk perhitungan laba
-          grossProfit,            // laba bersih per transaksi tersimpan
-        };
-        const updatedIncome = [saleRecord, ...income];
-        setIncome(updatedIncome); save("income", updatedIncome);
-        addToast(`Penjualan ${formatRp(totalSell)} otomatis dicatat! Laba: ${formatRp(grossProfit)}`, "success");
-
-        // Telegram notif
-        const msg = `🛒 <b>Penjualan Stok</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${txItem.name} x${qty}\n💰 Harga Jual: ${formatRp(totalSell)}\n📉 Modal: ${formatRp(totalCost)}\n💹 Laba: ${formatRp(grossProfit)}\n📅 ${today()}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
-        if (res && !res.ok) addToast("Telegram: " + (res.description || res.error), "error");
-      } else {
-        addToast("Harga jual belum diset, penjualan tidak dicatat otomatis", "error");
-      }
-    }
-
-    // Stok menipis?
-    if (Number(item.qty) <= Number(item.minQty || 5)) {
-      const msg = `⚠️ <b>Stok Menipis!</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${item.name}\n📉 Sisa Stok: ${item.qty}\n🔴 Minimum: ${item.minQty || 5}`;
-      await sendTelegram(tg.token, tg.chatId, msg);
-      addToast(`⚠️ Stok ${item.name} menipis (${item.qty})`, "error");
-    }
-
-    // Stok masuk → otomatis catat ke pengeluaran (Pembelian Stok)
-    if (txType === "in") {
-      const costPrice = Number(txItem.costPrice || 0);
-      const totalCost = costPrice * qty;
-      if (costPrice > 0) {
-        const expenseRecord = {
-          id: Date.now() + 1,
-          date: today(),
-          category: "Pembelian Stok",
-          desc: `Restock ${qty}x ${txItem.name}${txNote ? " - " + txNote : ""}`,
-          amount: totalCost,
-          fromStockIn: true,
-          itemId: txItem.id,
-          itemName: txItem.name,
-          qty,
-          costPrice,
-        };
-        const updatedExpense = [expenseRecord, ...expense];
-        setExpense(updatedExpense); save("expense", updatedExpense);
-        addToast(`Stok bertambah & pengeluaran ${formatRp(totalCost)} otomatis dicatat!`, "success");
-
-        const msg = `📦 <b>Restock Gudang</b>
-🏢 ${biz.name || "Bisnis"}
-📦 ${txItem.name} x${qty}
-💸 Modal/unit: ${formatRp(costPrice)}
-💰 Total: ${formatRp(totalCost)}
-📅 ${today()}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
-        if (res && !res.ok) addToast("Telegram: " + (res.description || res.error), "error");
-      } else {
-        addToast("Stok berhasil ditambahkan! (Harga modal belum diset, pengeluaran tidak dicatat)", "success");
-      }
-    }
-
-    setShowTxModal(false); setTxQty(""); setTxNote(""); setTxItem(null);
-  };
-
-  const del = (id) => { const u = inventory.filter(i => i.id !== id); setInventory(u); save("inventory", u); addToast("Barang dihapus", "info"); };
-
-  // Summary laba per barang
-  const profitByItem = {};
-  income.filter(r => r.fromStock).forEach(r => {
-    if (!profitByItem[r.itemId]) profitByItem[r.itemId] = { sell: 0, profit: 0, sold: 0 };
-    profitByItem[r.itemId].sell += Number(r.amount);
-    profitByItem[r.itemId].profit += Number(r.grossProfit || 0);
-    profitByItem[r.itemId].sold += Number(r.qty || 0);
-  });
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ color: "#f1f5f9", margin: 0, fontSize: 22 }}>📦 Stok Gudang</h2>
-        <button style={btnPrimary} onClick={() => setShowModal(true)}>+ Tambah Barang</button>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setTab("in")} style={{ ...btnStyle, background: tab === "in" ? "#10b981" : "#1e293b", color: "#fff" }}>📈 Pemasukan</button>
+          <button onClick={() => setTab("out")} style={{ ...btnStyle, background: tab === "out" ? "#ef4444" : "#1e293b", color: "#fff" }}>📉 Pengeluaran</button>
+        </div>
+        <button onClick={() => setShowModal(true)} style={{ ...btnStyle, background: "#3b82f6", color: "#fff" }}>+ Tambah Transaksi</button>
       </div>
 
-      {/* Info box */}
-      <div style={{ background: "#1e293b22", border: "1px solid #3b82f633", borderRadius: 10, padding: "10px 16px", marginBottom: 16, color: "#94a3b8", fontSize: 13 }}>
-        💡 Saat klik <strong style={{ color: "#ef4444" }}>kurangi stok (−)</strong>, penjualan otomatis tercatat di Cash Flow dengan harga jual yang sudah diset.
-      </div>
-
-      <div style={{ background: "#1e293b", borderRadius: 14, border: "1px solid #334155", overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              {["Nama Barang", "SKU", "Stok", "Modal/pcs", "Jual/pcs", "Margin", "Terjual", "Laba Total", ""].map(h => (
-                <th key={h} style={{ padding: "12px 16px", color: "#64748b", fontSize: 12, fontWeight: 600, textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
-              ))}
+      <div style={{ background: "#1e293b", borderRadius: 12, border: "1px solid #334155", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead style={{ background: "#0f172a", color: "#64748b" }}>
+            <tr>
+              <th style={{ padding: 12, textAlign: "left" }}>Tanggal</th>
+              <th style={{ padding: 12, textAlign: "left" }}>Kategori</th>
+              <th style={{ padding: 12, textAlign: "left" }}>Keterangan</th>
+              <th style={{ padding: 12, textAlign: "right" }}>Nominal</th>
             </tr>
           </thead>
           <tbody>
-            {inventory.map(item => {
-              const perf = profitByItem[item.id] || { sell: 0, profit: 0, sold: 0 };
-              const margin = Number(item.sellPrice) > 0 ? ((Number(item.sellPrice) - Number(item.costPrice)) / Number(item.sellPrice) * 100).toFixed(1) : 0;
-              return (
-                <tr key={item.id} style={{ borderTop: "1px solid #0f172a" }}>
-                  <td style={{ padding: "12px 16px" }}>
-                    <div style={{ color: "#f1f5f9", fontWeight: 500 }}>{item.name}</div>
-                    <div style={{ color: "#64748b", fontSize: 11 }}>{item.category || ""} {item.supplier ? "· " + item.supplier : ""}</div>
-                  </td>
-                  <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: 13 }}>{item.sku || "-"}</td>
-                  <td style={{ padding: "12px 16px" }}>
-                    <span style={{ color: Number(item.qty) <= Number(item.minQty || 5) ? "#ef4444" : "#10b981", fontWeight: 700, fontSize: 15 }}>{item.qty}</span>
-                    {Number(item.qty) <= Number(item.minQty || 5) && <span style={{ marginLeft: 4, fontSize: 11, color: "#ef4444" }}>⚠️</span>}
-                  </td>
-                  <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: 13 }}>{formatRp(item.costPrice)}</td>
-                  <td style={{ padding: "12px 16px", color: "#10b981", fontSize: 13, fontWeight: 600 }}>{formatRp(item.sellPrice)}</td>
-                  <td style={{ padding: "12px 16px" }}>
-                    <span style={{ background: Number(margin) > 20 ? "#10b98122" : "#f59e0b22", color: Number(margin) > 20 ? "#10b981" : "#f59e0b", padding: "2px 8px", borderRadius: 12, fontSize: 12, fontWeight: 600 }}>{margin}%</span>
-                  </td>
-                  <td style={{ padding: "12px 16px", color: "#94a3b8", fontSize: 13 }}>{perf.sold} pcs</td>
-                  <td style={{ padding: "12px 16px", color: "#8b5cf6", fontWeight: 700, fontSize: 13 }}>{formatRp(perf.profit)}</td>
-                  <td style={{ padding: "12px 16px" }}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button onClick={() => { setTxItem(item); setTxType("in"); setShowTxModal(true); }} style={{ ...btnSuccess, padding: "5px 10px", fontSize: 12 }} title="Stok Masuk">+</button>
-                      <button onClick={() => { setTxItem(item); setTxType("out"); setShowTxModal(true); }} style={{ ...btnDanger, padding: "5px 10px", fontSize: 12 }} title="Jual / Stok Keluar">−</button>
-                      <button onClick={() => del(item.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>🗑️</button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {inventory.length === 0 && <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: "#475569" }}>Belum ada barang</td></tr>}
+            {(tab === "in" ? income : expense).map(r => (
+              <tr key={r.id} style={{ borderBottom: "1px solid #334155" }}>
+                <td style={{ padding: 12, color: "#94a3b8" }}>{r.date}</td>
+                <td style={{ padding: 12 }}><span style={{ background: "#0f172a", padding: "2px 8px", borderRadius: 4 }}>{r.category}</span></td>
+                <td style={{ padding: 12, color: "#f1f5f9" }}>{r.desc || "-"}</td>
+                <td style={{ padding: 12, textAlign: "right", color: tab === "in" ? "#10b981" : "#ef4444", fontWeight: 700 }}>{formatRp(r.amount)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Modal tambah barang */}
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="📦 Tambah Barang">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="NAMA BARANG"><input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Nama barang" /></Field>
-          <Field label="SKU"><input style={inputStyle} value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} placeholder="SKU-001" /></Field>
-          <Field label="KATEGORI"><input style={inputStyle} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} placeholder="Kategori" /></Field>
-          <Field label="SUPPLIER"><input style={inputStyle} value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} placeholder="Nama supplier" /></Field>
-          <Field label="STOK AWAL"><input type="number" style={inputStyle} value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="0" /></Field>
-          <Field label="STOK MINIMUM ALERT"><input type="number" style={inputStyle} value={form.minQty} onChange={e => setForm({ ...form, minQty: e.target.value })} placeholder="5" /></Field>
-          <Field label="HARGA MODAL / PCS">
-            <input type="number" style={inputStyle} value={form.costPrice} onChange={e => setForm({ ...form, costPrice: e.target.value })} placeholder="0" />
-          </Field>
-          <Field label="HARGA JUAL / PCS">
-            <input type="number" style={inputStyle} value={form.sellPrice} onChange={e => setForm({ ...form, sellPrice: e.target.value })} placeholder="0" />
-          </Field>
-        </div>
-        {form.costPrice && form.sellPrice && (
-          <div style={{ background: "#0f172a", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 13 }}>
-            <span style={{ color: "#64748b" }}>Margin per pcs: </span>
-            <span style={{ color: "#10b981", fontWeight: 700 }}>{formatRp(Number(form.sellPrice) - Number(form.costPrice))}</span>
-            <span style={{ color: "#64748b" }}> ({form.sellPrice > 0 ? ((Number(form.sellPrice) - Number(form.costPrice)) / Number(form.sellPrice) * 100).toFixed(1) : 0}%)</span>
+      <Modal open={showModal} onClose={() => setShowModal(false)} title={tab === "in" ? "Catat Pemasukan" : "Catat Pengeluaran"}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, color: "#64748b" }}>TANGGAL</label>
+            <input type="date" style={inputStyle} value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
           </div>
-        )}
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowModal(false)}>Batal</button>
-          <button style={btnPrimary} onClick={submit}>Simpan</button>
-        </div>
-      </Modal>
-
-      {/* Modal transaksi stok */}
-      <Modal open={showTxModal} onClose={() => { setShowTxModal(false); setTxQty(""); setTxNote(""); }} title={txType === "in" ? "📥 Stok Masuk" : "📤 Penjualan / Stok Keluar"}>
-        {txItem && (
-          <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ color: "#f1f5f9", fontWeight: 700, marginBottom: 6 }}>{txItem.name}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 13 }}>
-              <div><span style={{ color: "#64748b" }}>Stok: </span><span style={{ color: "#f1f5f9", fontWeight: 600 }}>{txItem.qty}</span></div>
-              <div><span style={{ color: "#64748b" }}>Modal: </span><span style={{ color: "#f1f5f9" }}>{formatRp(txItem.costPrice)}</span></div>
-              <div><span style={{ color: "#64748b" }}>Jual: </span><span style={{ color: "#10b981", fontWeight: 700 }}>{formatRp(txItem.sellPrice)}</span></div>
-            </div>
-            {txType === "out" && txQty > 0 && (
-              <div style={{ marginTop: 10, padding: "8px 0", borderTop: "1px solid #1e293b" }}>
-                <div style={{ color: "#64748b", fontSize: 12 }}>Preview Penjualan:</div>
-                <div style={{ color: "#10b981", fontWeight: 700, fontSize: 16 }}>{formatRp(Number(txItem.sellPrice) * Number(txQty))}</div>
-                <div style={{ color: "#8b5cf6", fontSize: 13 }}>Laba: {formatRp((Number(txItem.sellPrice) - Number(txItem.costPrice)) * Number(txQty))}</div>
-              </div>
-            )}
+          <div>
+            <label style={{ fontSize: 11, color: "#64748b" }}>KATEGORI</label>
+            <select style={inputStyle} value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
+              <option value="">Pilih Kategori</option>
+              {(tab === "in" ? CATEGORIES_IN : CATEGORIES_OUT).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
-        )}
-        <Field label="JUMLAH"><input type="number" style={inputStyle} placeholder="0" value={txQty} onChange={e => setTxQty(e.target.value)} /></Field>
-        <Field label="CATATAN (OPSIONAL)"><input style={inputStyle} placeholder="Catatan transaksi..." value={txNote} onChange={e => setTxNote(e.target.value)} /></Field>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => { setShowTxModal(false); setTxQty(""); setTxNote(""); }}>Batal</button>
-          <button style={txType === "in" ? btnSuccess : btnDanger} onClick={doTx}>
-            {txType === "in" ? "📥 Tambah Stok" : "🛒 Jual & Kurangi Stok"}
-          </button>
+          <div>
+            <label style={{ fontSize: 11, color: "#64748b" }}>DESKRIPSI / KETERANGAN</label>
+            <input type="text" style={inputStyle} placeholder="Contoh: Pembayaran borongan pagar" value={form.desc} onChange={e => setForm({...form, desc: e.target.value})} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: "#64748b" }}>NOMINAL TRANSAKSI (RP)</label>
+            <input type="number" min="1" style={inputStyle} placeholder="0" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+            <button onClick={() => setShowModal(false)} style={{ ...btnStyle, background: "#334155", color: "#fff" }}>Batal</button>
+            <button onClick={submit} style={{ ...btnStyle, background: tab === "in" ? "#10b981" : "#ef4444", color: "#fff" }}>Simpan</button>
+          </div>
         </div>
       </Modal>
     </div>
   );
 }
 
-// ==================== INVOICE ====================
-function Invoice({ biz, addToast }) {
-  const [form, setForm] = useState({ clientName: "", clientAddr: "", clientPhone: "", date: today(), dueDate: "", notes: "" });
-  const [items, setItems] = useState([{ desc: "", qty: 1, price: "" }]);
-  const [tax, setTax] = useState(11);
-  const [invoices, setInvoicesState] = useState(() => load("invoices", []));
+// ==================== COMPONENT: INVENTORY ====================
+function Inventory({ inventory, setInventory, addToast, saveAndSync }) {
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ name: "", qty: "", costPrice: "", sellPrice: "" });
 
-  const addItem = () => setItems([...items, { desc: "", qty: 1, price: "" }]);
-  const updateItem = (i, f, v) => setItems(items.map((it, idx) => idx === i ? { ...it, [f]: v } : it));
-  const removeItem = (i) => setItems(items.filter((_, idx) => idx !== i));
-  const subtotal = items.reduce((s, i) => s + (Number(i.qty) * Number(i.price || 0)), 0);
-  const taxAmt = subtotal * tax / 100;
-  const total = subtotal + taxAmt;
-
-  const saveInv = () => {
-    if (!form.clientName) return addToast("Nama klien wajib!", "error");
-    const inv = { ...form, items, tax, subtotal, taxAmt, total, id: Date.now(), no: `INV-${Date.now().toString().slice(-6)}` };
-    const updated = [inv, ...invoices]; setInvoicesState(updated); save("invoices", updated);
-    addToast("Invoice tersimpan!", "success");
-  };
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ color: "#f1f5f9", margin: 0, fontSize: 22 }}>🧾 Invoice Generator</h2>
-        <button style={btnSuccess} onClick={saveInv}>💾 Simpan Invoice</button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 16px" }}>📋 Data Klien</h4>
-          <Field label="NAMA KLIEN"><input style={inputStyle} value={form.clientName} onChange={e => setForm({ ...form, clientName: e.target.value })} placeholder="Nama klien" /></Field>
-          <Field label="ALAMAT"><input style={inputStyle} value={form.clientAddr} onChange={e => setForm({ ...form, clientAddr: e.target.value })} placeholder="Alamat" /></Field>
-          <Field label="TELEPON"><input style={inputStyle} value={form.clientPhone} onChange={e => setForm({ ...form, clientPhone: e.target.value })} placeholder="08xx" /></Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="TGL INVOICE"><input type="date" style={inputStyle} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
-            <Field label="JATUH TEMPO"><input type="date" style={inputStyle} value={form.dueDate} onChange={e => setForm({ ...form, dueDate: e.target.value })} /></Field>
-          </div>
-          <Field label={`PAJAK: ${tax}%`}><input type="range" min="0" max="20" style={{ width: "100%" }} value={tax} onChange={e => setTax(Number(e.target.value))} /></Field>
-          <Field label="CATATAN"><textarea style={{ ...inputStyle, resize: "vertical", minHeight: 60 }} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Catatan..." /></Field>
-        </div>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <div style={{ background: "#0f172a", borderRadius: 10, padding: 20, marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {biz.logo ? <img src={biz.logo} alt="logo" style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center" }}>💼</div>}
-                <div>
-                  <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 13 }}>{biz.name || "Bisnis Saya"}</div>
-                  <div style={{ color: "#64748b", fontSize: 11 }}>{biz.email || ""}</div>
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ color: "#3b82f6", fontWeight: 700, fontSize: 16 }}>INVOICE</div>
-                <div style={{ color: "#64748b", fontSize: 11 }}>#{Date.now().toString().slice(-6)}</div>
-              </div>
-            </div>
-            {form.clientName && <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 12 }}><strong style={{ color: "#f1f5f9" }}>{form.clientName}</strong><br />{form.clientAddr}</div>}
-            {items.map((it, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                <input style={{ ...inputStyle, flex: 2 }} placeholder="Deskripsi" value={it.desc} onChange={e => updateItem(i, "desc", e.target.value)} />
-                <input type="number" style={{ ...inputStyle, flex: 0, width: 55 }} placeholder="Qty" value={it.qty} onChange={e => updateItem(i, "qty", e.target.value)} />
-                <input type="number" style={{ ...inputStyle, flex: 1.5 }} placeholder="Harga" value={it.price} onChange={e => updateItem(i, "price", e.target.value)} />
-                <button onClick={() => removeItem(i)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>✕</button>
-              </div>
-            ))}
-            <button onClick={addItem} style={{ ...btnPrimary, padding: "6px 14px", fontSize: 12, marginBottom: 12 }}>+ Item</button>
-            <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8", fontSize: 13, marginBottom: 4 }}><span>Subtotal</span><span>{formatRp(subtotal)}</span></div>
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8", fontSize: 13, marginBottom: 8 }}><span>Pajak {tax}%</span><span>{formatRp(taxAmt)}</span></div>
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#f1f5f9", fontWeight: 700, fontSize: 16 }}><span>TOTAL</span><span style={{ color: "#3b82f6" }}>{formatRp(total)}</span></div>
-            </div>
-          </div>
-          {invoices.length > 0 && (
-            <div>
-              <h5 style={{ color: "#64748b", margin: "0 0 10px", fontSize: 12 }}>INVOICE TERSIMPAN</h5>
-              {invoices.slice(0, 3).map(inv => (
-                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #0f172a" }}>
-                  <div><div style={{ color: "#f1f5f9", fontSize: 13 }}>{inv.clientName}</div><div style={{ color: "#64748b", fontSize: 11 }}>{inv.date}</div></div>
-                  <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>{formatRp(inv.total)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ==================== REPORTS ====================
-function Reports({ income, expense, inventory }) {
-  const totalIn = income.reduce((s, r) => s + Number(r.amount), 0);
-  const totalOut = expense.reduce((s, r) => s + Number(r.amount), 0);
-  // Laba bersih penjualan = harga jual - modal
-  const totalNetProfit = income.filter(r => r.fromStock).reduce((s, r) => s + Number(r.grossProfit || 0), 0);
-  const netProfit = totalIn - totalOut;
-
-  const printReport = () => {
-    const bizName = "Laporan Cash Flow";
-    const printDate = new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Laporan</title><style>
-      *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:Arial,sans-serif;padding:32px;color:#1e293b;font-size:13px}
-      h1{font-size:22px;margin-bottom:4px;color:#1e293b}
-      .sub{color:#64748b;font-size:12px;margin-bottom:24px}
-      .summary{display:flex;gap:16px;margin-bottom:24px}
-      .card{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
-      .card-label{font-size:11px;color:#64748b;margin-bottom:4px}
-      .card-value{font-size:16px;font-weight:700}
-      .green{color:#059669}.red{color:#dc2626}.blue{color:#2563eb}.purple{color:#7c3aed}
-      h2{font-size:15px;margin:20px 0 10px;padding-bottom:6px;border-bottom:2px solid #e2e8f0}
-      table{width:100%;border-collapse:collapse;margin-bottom:16px}
-      th{background:#f1f5f9;padding:9px 12px;text-align:left;font-size:12px;color:#475569;font-weight:600}
-      td{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px}
-      tr:last-child td{border-bottom:none}
-      .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;background:#f1f5f9}
-      @media print{body{padding:16px}.no-print{display:none}}
-    </style></head><body>
-    <h1>${bizName}</h1>
-    <div class="sub">Dicetak: ${printDate}</div>
-    <div class="summary">
-      <div class="card"><div class="card-label">TOTAL PEMASUKAN</div><div class="card-value green">Rp ${totalIn.toLocaleString("id-ID")}</div></div>
-      <div class="card"><div class="card-label">TOTAL PENGELUARAN</div><div class="card-value red">Rp ${totalOut.toLocaleString("id-ID")}</div></div>
-      <div class="card"><div class="card-label">NET CASH FLOW</div><div class="card-value blue">Rp ${netProfit.toLocaleString("id-ID")}</div></div>
-      <div class="card"><div class="card-label">LABA BERSIH PENJUALAN</div><div class="card-value purple">Rp ${totalNetProfit.toLocaleString("id-ID")}</div></div>
-    </div>
-    <h2>Pemasukan</h2>
-    <table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th style="text-align:right">Nominal</th><th style="text-align:right">Laba Bersih</th></tr></thead><tbody>
-    ${income.map(r => `<tr><td>${r.date}</td><td><span class="badge">${r.category}</span></td><td>${r.desc||"-"}</td><td style="text-align:right;color:#059669;font-weight:600">Rp ${Number(r.amount).toLocaleString("id-ID")}</td><td style="text-align:right;color:#7c3aed">${r.grossProfit ? "Rp " + Number(r.grossProfit).toLocaleString("id-ID") : "-"}</td></tr>`).join("")}
-    </tbody></table>
-    <h2>Pengeluaran</h2>
-    <table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th style="text-align:right">Nominal</th></tr></thead><tbody>
-    ${expense.map(r => `<tr><td>${r.date}</td><td><span class="badge">${r.category}</span></td><td>${r.desc||"-"}</td><td style="text-align:right;color:#dc2626;font-weight:600">Rp ${Number(r.amount).toLocaleString("id-ID")}</td></tr>`).join("")}
-    </tbody></table>
-    </body></html>`;
-
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none";
-    document.body.appendChild(iframe);
-    iframe.src = url;
-    iframe.onload = () => {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-      setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); }, 2000);
+  const submit = () => {
+    if (!form.name || Number(form.qty) < 0 || Number(form.sellPrice) <= 0) return addToast("Nama produk dan harga tidak valid!", "error");
+    const newItem = {
+      id: Date.now(),
+      name: form.name,
+      qty: Number(form.qty),
+      costPrice: Number(form.costPrice || 0),
+      sellPrice: Number(form.sellPrice)
     };
+    const updated = [newItem, ...inventory];
+    setInventory(updated);
+    saveAndSync("inventory", updated);
+    setShowModal(false);
+    setForm({ name: "", qty: "", costPrice: "", sellPrice: "" });
+    addToast("Item material baru ditambahkan", "success");
   };
 
-  const exportCSV = () => {
-    const rows = [
-      ["Jenis","Tanggal","Kategori","Deskripsi","Nominal","Laba Bersih"],
-      ...income.map(r => ["Pemasukan",r.date,r.category,r.desc||"",r.amount,r.grossProfit||""]),
-      ...expense.map(r => ["Pengeluaran",r.date,r.category,r.desc||"",r.amount,""]),
-    ];
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+        <h3 style={{ margin: 0, color: "#fff" }}>📦 Manajemen Stok & Material</h3>
+        <button onClick={() => setShowModal(true)} style={{ ...btnStyle, background: "#3b82f6", color: "#fff" }}>+ Tambah Material</button>
+      </div>
+      <div style={{ background: "#1e293b", borderRadius: 12, border: "1px solid #334155", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead style={{ background: "#0f172a", color: "#64748b" }}>
+            <tr>
+              <th style={{ padding: 12, textAlign: "left" }}>Nama Barang</th>
+              <th style={{ padding: 12, textAlign: "center" }}>Sisa Stok</th>
+              <th style={{ padding: 12, textAlign: "right" }}>Harga Modal</th>
+              <th style={{ padding: 12, textAlign: "right" }}>Harga Jual</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inventory.map(item => (
+              <tr key={item.id} style={{ borderBottom: "1px solid #334155" }}>
+                <td style={{ padding: 12, color: "#fff", fontWeight: 600 }}>{item.name}</td>
+                <td style={{ padding: 12, textAlign: "center", color: item.qty <= 3 ? "#ef4444" : "#94a3b8" }}>{item.qty} Pcs</td>
+                <td style={{ padding: 12, textAlign: "right", color: "#94a3b8" }}>{formatRp(item.costPrice)}</td>
+                <td style={{ padding: 12, textAlign: "right", color: "#10b981", fontWeight: 700 }}>{formatRp(item.sellPrice)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Modal open={showModal} onClose={() => setShowModal(false)} title="Tambah Material Baru">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input type="text" style={inputStyle} placeholder="Nama Material (e.g., Besi Hollow 4x4)" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+          <input type="number" min="0" style={inputStyle} placeholder="Jumlah Stok" value={form.qty} onChange={e => setForm({...form, qty: e.target.value})} />
+          <input type="number" min="0" style={inputStyle} placeholder="Harga Beli / Modal" value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} />
+          <input type="number" min="1" style={inputStyle} placeholder="Harga Jual Kontan" value={form.sellPrice} onChange={e => setForm({...form, sellPrice: e.target.value})} />
+          <button onClick={submit} style={{ ...btnStyle, background: "#10b981", color: "#fff", marginTop: 6 }}>Masukkan Inventaris</button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ==================== COMPONENT: SETTINGS & BACKUP ====================
+function Settings({ biz, setBiz, tg, setTg, saveAndSync, addToast }) {
+  const [bForm, setBForm] = useState({ ...biz });
+  const [tForm, setTForm] = useState({ ...tg });
+
+  const triggerExport = () => {
+    // FIX #3: Fitur Eksport/Import File Data JSON Lokal Cadangan di HP
+    const fullData = {
+      biz: loadLocal("biz", {}),
+      income: loadLocal("income", []),
+      expense: loadLocal("expense", []),
+      inventory: loadLocal("inventory", []),
+      tg: loadLocal("tg", {})
+    };
+    const blob = new Blob([JSON.stringify(fullData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(rows.map(r => r.join(",")).join("\n"));
-    a.download = "cashflow.csv"; a.click();
+    a.href = url;
+    a.download = `bizflow_backup_${today()}.json`;
+    a.click();
+    addToast("Backup file JSON berhasil diunduh ke HP!", "success");
   };
 
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ color: "#f1f5f9", margin: 0, fontSize: 22 }}>📈 Laporan</h2>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button style={btnPrimary} onClick={printReport}>🖨️ Cetak PDF</button>
-          <button style={btnSuccess} onClick={exportCSV}>📥 Export CSV</button>
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 16, marginBottom: 24 }}>
-        <StatCard label="TOTAL PEMASUKAN" value={formatRp(totalIn)} icon="📈" color="#10b981" />
-        <StatCard label="TOTAL PENGELUARAN" value={formatRp(totalOut)} icon="📉" color="#ef4444" />
-        <StatCard label="NET CASH FLOW" value={formatRp(netProfit)} icon="💵" color={netProfit >= 0 ? "#3b82f6" : "#f59e0b"} />
-        <StatCard label="LABA BERSIH PENJUALAN" value={formatRp(totalNetProfit)} icon="💹" color="#8b5cf6" sub="Harga Jual - Modal" />
-        <StatCard label="TOTAL PRODUK" value={inventory.length} icon="📦" color="#06b6d4" />
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {[{ label: "Pemasukan per Kategori", data: income, color: "#10b981" }, { label: "Pengeluaran per Kategori", data: expense, color: "#ef4444" }].map(({ label, data, color }) => {
-          const grouped = {};
-          data.forEach(r => { grouped[r.category] = (grouped[r.category] || 0) + Number(r.amount); });
-          const total = data.reduce((s, r) => s + Number(r.amount), 0);
-          return (
-            <div key={label} style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-              <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>{label}</h4>
-              {Object.entries(grouped).map(([cat, amt]) => (
-                <div key={cat} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 13 }}>{cat}</span>
-                    <span style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600 }}>{formatRp(amt)}</span>
-                  </div>
-                  <div style={{ background: "#0f172a", borderRadius: 99, height: 6 }}>
-                    <div style={{ background: color, borderRadius: 99, height: "100%", width: `${total > 0 ? (amt / total) * 100 : 0}%` }} />
-                  </div>
-                </div>
-              ))}
-              {Object.keys(grouped).length === 0 && <div style={{ color: "#475569", textAlign: "center", padding: 20 }}>Belum ada data</div>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ==================== TELEGRAM SETTINGS ====================
-function TelegramSettings({ tg, setTg, addToast }) {
-  const [form, setForm] = useState(tg);
-  const [testing, setTesting] = useState(false);
-  const [lastResult, setLastResult] = useState(null);
-
-  const test = async () => {
-    if (!form.token || !form.chatId) return addToast("Isi Bot Token dan Chat ID terlebih dahulu!", "error");
-    setTesting(true); setLastResult(null);
-    const res = await sendTelegram(form.token, form.chatId, `✅ <b>Test BizFlow Pro</b>\n\nIntegrasi Telegram berhasil!\n🤖 Bot aktif dan siap menerima notifikasi.\n📅 ${new Date().toLocaleString("id-ID")}`);
-    setTesting(false);
-    setLastResult(res);
-    if (res && res.ok) {
-      addToast("✅ Pesan test berhasil terkirim ke Telegram!", "success");
-    } else {
-      const errMsg = res?.description || res?.error || "Tidak diketahui";
-      addToast("❌ Gagal: " + errMsg, "error");
-    }
-  };
-
-  const saveTg = () => { setTg(form); save("telegram", form); addToast("Pengaturan Telegram disimpan!", "success"); };
-
-  return (
-    <div>
-      <h2 style={{ color: "#f1f5f9", margin: "0 0 24px", fontSize: 22 }}>✈️ Pengaturan Telegram Bot</h2>
-      <div style={{ maxWidth: 580 }}>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155", marginBottom: 20 }}>
-          <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 20, color: "#94a3b8", fontSize: 13, lineHeight: 1.8 }}>
-            <strong style={{ color: "#3b82f6" }}>📋 Cara Setup Bot Telegram:</strong><br />
-            1. Buka Telegram → cari <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>@BotFather</code><br />
-            2. Ketik <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>/newbot</code> → ikuti instruksi → salin <strong style={{ color: "#f1f5f9" }}>Bot Token</strong><br />
-            3. Untuk Chat ID pribadi: cari <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>@userinfobot</code> → klik Start<br />
-            4. Untuk grup: tambahkan bot ke grup → kirim pesan → cek<br /><code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>https://api.telegram.org/bot[TOKEN]/getUpdates</code><br />
-            5. Masukkan token & chat ID → Simpan → Test
-          </div>
-
-          <Field label="BOT TOKEN">
-            <input style={inputStyle} value={form.token || ""} onChange={e => setForm({ ...form, token: e.target.value })} placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ" />
-          </Field>
-          <Field label="CHAT ID (angka, contoh: 123456789 atau -100xxxx untuk grup)">
-            <input style={inputStyle} value={form.chatId || ""} onChange={e => setForm({ ...form, chatId: e.target.value })} placeholder="123456789" />
-          </Field>
-
-          {lastResult && (
-            <div style={{ background: lastResult.ok ? "#10b98122" : "#ef444422", border: `1px solid ${lastResult.ok ? "#10b981" : "#ef4444"}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
-              {lastResult.ok
-                ? <span style={{ color: "#10b981" }}>✅ Berhasil! Pesan terkirim ke chat ID: {lastResult.result?.chat?.id}</span>
-                : <span style={{ color: "#ef4444" }}>❌ Gagal: {lastResult.description || lastResult.error}<br /><span style={{ color: "#94a3b8", fontSize: 12 }}>Pastikan token benar, bot sudah di-start, dan chat ID valid.</span></span>
-              }
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button style={btnPrimary} onClick={saveTg}>💾 Simpan</button>
-            <button style={{ ...btnPrimary, background: "linear-gradient(135deg,#0088cc,#0066aa)", opacity: testing ? 0.7 : 1 }} onClick={test} disabled={testing}>
-              {testing ? "⏳ Mengirim..." : "📨 Kirim Test"}
-            </button>
-          </div>
-        </div>
-
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 12px" }}>🔔 Notifikasi Otomatis</h4>
-          {[
-            { icon: "💰", label: "Pemasukan baru ditambahkan" },
-            { icon: "💸", label: "Pengeluaran baru ditambahkan" },
-            { icon: "🛒", label: "Penjualan stok (dengan detail laba)" },
-            { icon: "🛒", label: "Transaksi kasir (dengan detail laba)" },
-            { icon: "⚠️", label: "Stok barang di bawah minimum" },
-          ].map(n => (
-            <div key={n.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #0f172a", color: "#94a3b8", fontSize: 14 }}>
-              <span>{n.icon}</span> {n.label} <span style={{ marginLeft: "auto", color: "#10b981", fontSize: 12 }}>Aktif ✓</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ==================== SETTINGS ====================
-function Settings({ biz, setBiz, addToast }) {
-  const [form, setForm] = useState(biz);
-  const fileRef = useRef();
-
-  const handleLogo = (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev) => setForm({ ...form, logo: ev.target.result });
-    r.readAsDataURL(f);
-  };
-
-  return (
-    <div>
-      <h2 style={{ color: "#f1f5f9", margin: "0 0 24px", fontSize: 22 }}>⚙️ Pengaturan Bisnis</h2>
-      <div style={{ maxWidth: 560 }}>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155" }}>
-          <div style={{ textAlign: "center", marginBottom: 24 }}>
-            <div onClick={() => fileRef.current.click()} style={{ cursor: "pointer", display: "inline-block" }}>
-              {form.logo
-                ? <img src={form.logo} alt="logo" style={{ width: 90, height: 90, borderRadius: 18, objectFit: "cover", border: "3px solid #3b82f6" }} />
-                : <div style={{ width: 90, height: 90, borderRadius: 18, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, margin: "0 auto" }}>💼</div>}
-            </div>
-            <div style={{ color: "#64748b", fontSize: 12, marginTop: 8 }}>Klik untuk upload logo bisnis</div>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogo} />
-          </div>
-          <Field label="NAMA BISNIS"><input style={inputStyle} value={form.name || ""} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="PT. Contoh Bisnis" /></Field>
-          <Field label="NAMA PEMILIK"><input style={inputStyle} value={form.owner || ""} onChange={e => setForm({ ...form, owner: e.target.value })} placeholder="Nama pemilik" /></Field>
-          <Field label="NOMOR TELEPON"><input style={inputStyle} value={form.phone || ""} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="08xxxxxxxxxx" /></Field>
-          <Field label="EMAIL"><input type="email" style={inputStyle} value={form.email || ""} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="email@bisnis.com" /></Field>
-          <Field label="ALAMAT"><textarea style={{ ...inputStyle, resize: "vertical", minHeight: 70 }} value={form.address || ""} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Alamat bisnis" /></Field>
-          <button 
-  style={btnPrimary} 
-  onClick={() => { 
-    setBiz(form); 
-    save("biz", form); 
-    addToast("Profil bisnis disimpan!", "success"); 
-    // PICU SIBER-GEMBOK CLOUD & KIRIM OTP KE TELEGRAM OWNER
-    triggerFraudSuspension("Perubahan data sensitif profil/konfigurasi bisnis");
-  }}
->
-  💾 Simpan Profil
-</button>
-
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ==================== MAIN APP ====================
-// ==================== NAV CONFIG ====================
-const NAV_OWNER = [
-  { id: "dashboard", icon: "📊", label: "Dashboard" },
-  { id: "cashflow", icon: "💰", label: "Cash Flow" },
-  { id: "kasir", icon: "🛒", label: "Kasir" },
-  { id: "inventory", icon: "📦", label: "Stok Gudang" },
-  { id: "invoice", icon: "🧾", label: "Invoice" },
-  { id: "reports", icon: "📈", label: "Laporan" },
-  { id: "telegram", icon: "✈️", label: "Telegram Bot" },
-  { id: "owner", icon: "👑", label: "Owner" },
-  { id: "settings", icon: "⚙️", label: "Pengaturan" },
-];
-
-const NAV_KARYAWAN = [
-  { id: "dashboard", icon: "📊", label: "Dashboard" },
-  { id: "kasir", icon: "🛒", label: "Kasir" },
-  { id: "inventory", icon: "📦", label: "Stok Gudang" },
-  { id: "invoice", icon: "🧾", label: "Invoice" },
-  { id: "reports", icon: "📈", label: "Laporan" },
-];
-
-// ==================== LOGIN SCREEN ====================
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [showPass, setShowPass] = useState(false);
-
-  const handleLogin = () => {
-    if (!username || !password) return setError("Username & password wajib diisi!");
-    const users = load("users", []);
-    // Cek owner default
-    const ownerDefault = load("owner_account", { username: "owner", password: "owner123" });
-    let user = null;
-    if (username === ownerDefault.username && password === ownerDefault.password) {
-      user = { username, role: "owner", name: "Owner" };
-    } else {
-      user = users.find(u => u.username === username && u.password === password && u.active !== false);
-    }
-    if (!user) return setError("Username atau password salah!");
-    setError("");
-    onLogin(user);
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#0a0f1e", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif", padding: 16 }}>
-      <style>{`@keyframes floatUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}} @keyframes shimmer{0%{background-position:-200% center}100%{background-position:200% center}}`}</style>
-      <div style={{ width: "100%", maxWidth: 400, animation: "floatUp 0.6s ease" }}>
-        <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg,#3b82f6,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, margin: "0 auto 16px", boxShadow: "0 0 40px #3b82f644" }}>💼</div>
-          <div style={{ fontSize: 26, fontWeight: 800, background: "linear-gradient(135deg,#3b82f6,#8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundSize: "200% auto", animation: "shimmer 2s linear infinite" }}>BizFlow Pro</div>
-          <div style={{ color: "#475569", fontSize: 13, marginTop: 4 }}>Masuk ke akun Anda</div>
-        </div>
-        <div style={{ background: "#1e293b", borderRadius: 18, padding: 28, border: "1px solid #334155", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-          <Field label="USERNAME">
-            <input style={inputStyle} placeholder="Masukkan username" value={username} onChange={e => setUsername(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} autoFocus />
-          </Field>
-          <Field label="PASSWORD">
-            <div style={{ position: "relative" }}>
-              <input type={showPass ? "text" : "password"} style={{ ...inputStyle, paddingRight: 40 }} placeholder="Masukkan password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} />
-              <button onClick={() => setShowPass(s => !s)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 16 }}>{showPass ? "🙈" : "👁️"}</button>
-            </div>
-          </Field>
-          {error && <div style={{ background: "#ef444422", border: "1px solid #ef444444", borderRadius: 8, padding: "10px 14px", color: "#fca5a5", fontSize: 13, marginBottom: 14 }}>❌ {error}</div>}
-          <button style={{ ...btnPrimary, width: "100%", padding: "12px", fontSize: 15, marginTop: 4 }} onClick={handleLogin}>🔓 Masuk</button>
-          <div style={{ color: "#334155", fontSize: 11, textAlign: "center", marginTop: 16 }}>Login default owner: owner / owner123</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ==================== OWNER PAGE ====================
-const generateKey = () => "bfk_" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-const ACCOUNT_TYPES = ["Rekening Bank", "E-Wallet", "Kartu Kredit", "Lainnya"];
-const BANK_LIST = ["BCA", "BNI", "BRI", "Mandiri", "CIMB Niaga", "Danamon", "Permata", "BSI", "Jenius", "GoPay", "OVO", "Dana", "ShopeePay", "LinkAja", "Lainnya"];
-const COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-function OwnerPage({ addToast, tg, setTg }) {
-  const [tab, setTab] = useState("akun");
-  // --- Rekening ---
-  const [accounts, setAccounts] = useState(() => load("owner_accounts", []));
-  const [cooldowns, setCooldowns] = useState(() => load("owner_cooldowns", {}));
-  const [showAccModal, setShowAccModal] = useState(false);
-  const [editAccId, setEditAccId] = useState(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  const [showNumbers, setShowNumbers] = useState({});
-  const [accForm, setAccForm] = useState({ type: "Rekening Bank", bank: "BCA", accountName: "", accountNumber: "", notes: "" });
-  // --- Karyawan ---
-  const [users, setUsers] = useState(() => load("users", []));
-  const [showUserModal, setShowUserModal] = useState(false);
-  const [editUserId, setEditUserId] = useState(null);
-  const [userForm, setUserForm] = useState({ name: "", username: "", password: "", position: "", active: true });
-  // --- Owner akun sendiri ---
-  const [ownerAcc, setOwnerAcc] = useState(() => load("owner_account", { username: "owner", password: "owner123" }));
-  const [showOwnerPass, setShowOwnerPass] = useState(false);
-  const [ownerForm, setOwnerForm] = useState({ username: ownerAcc.username, password: "", newPassword: "", confirmPassword: "" });
-  // --- Jam kerja Telegram ---
-  const [workHours, setWorkHours] = useState(() => load("work_hours", { enabled: false, start: "08:00", end: "17:00" }));
-  // --- Integrasi Website ---
-  const [websites, setWebsites] = useState(() => load("integrations_web", []));
-  const [showWebModal, setShowWebModal] = useState(false);
-  const [webForm, setWebForm] = useState({ name: "", url: "", apiKey: "", webhookUrl: "", syncKasir: true, syncStok: true, notes: "" });
-  const [editWebId, setEditWebId] = useState(null);
-  const [testingWeb, setTestingWeb] = useState(null);
-  // --- Payment Gateway ---
-  const [gateways, setGateways] = useState(() => load("payment_gateways", []));
-  const [showGwModal, setShowGwModal] = useState(false);
-  const [gwForm, setGwForm] = useState({ provider: "Midtrans", merchantId: "", serverKey: "", clientKey: "", webhookUrl: "", active: true, notifTelegram: true, notes: "" });
-  const [editGwId, setEditGwId] = useState(null);
-  const [showGwKeys, setShowGwKeys] = useState({});
-
-  const saveAccounts = d => { setAccounts(d); save("owner_accounts", d); };
-  const saveCooldowns = d => { setCooldowns(d); save("owner_cooldowns", d); };
-  const saveUsers = d => { setUsers(d); save("users", d); };
-
-  const getCooldownRemaining = id => {
-    const cd = cooldowns[id]; if (!cd) return null;
-    const r = cd - Date.now(); if (r <= 0) return null;
-    return `${Math.floor(r/3600000)} jam ${Math.floor((r%3600000)/60000)} menit`;
-  };
-
-  // --- Rekening handlers ---
-  const openAddAcc = () => { setEditAccId(null); setAccForm({ type: "Rekening Bank", bank: "BCA", accountName: "", accountNumber: "", notes: "" }); setShowAccModal(true); };
-  const openEditAcc = acc => {
-    const r = getCooldownRemaining(acc.id); if (r) return addToast(`Cooldown aktif, tunggu ${r}`, "error");
-    setEditAccId(acc.id); setAccForm({ type: acc.type, bank: acc.bank, accountName: acc.accountName, accountNumber: acc.accountNumber, notes: acc.notes || "" }); setShowAccModal(true);
-  };
-  const submitAcc = () => {
-    if (!accForm.accountName || !accForm.accountNumber) return addToast("Nama & nomor akun wajib!", "error");
-    if (editAccId) {
-      saveAccounts(accounts.map(a => a.id === editAccId ? { ...a, ...accForm, lastEdited: Date.now() } : a));
-      saveCooldowns({ ...cooldowns, [editAccId]: Date.now() + COOLDOWN_MS });
-      addToast("Akun diperbarui! Bisa diubah lagi 24 jam kemudian.", "success");
-    } else {
-      saveAccounts([...accounts, { ...accForm, id: Date.now(), createdAt: Date.now() }]);
-      addToast("Akun ditambahkan!", "success");
-    }
-    setShowAccModal(false); setEditAccId(null);
-  };
-  const deleteAcc = id => {
-    const r = getCooldownRemaining(id); if (r) return addToast(`Cooldown aktif, tunggu ${r}`, "error");
-    saveAccounts(accounts.filter(a => a.id !== id));
-    const nc = { ...cooldowns }; delete nc[id]; saveCooldowns(nc);
-    setShowDeleteConfirm(null); addToast("Akun dihapus!", "info");
-  };
-  const maskNum = n => !n ? "-" : "*".repeat(Math.max(0, n.length - 4)) + n.slice(-4);
-  const typeIcon = t => ({ "Rekening Bank": "🏦", "E-Wallet": "📱", "Kartu Kredit": "💳", "Lainnya": "💰" }[t] || "💰");
-
-  // --- Karyawan handlers ---
-  const openAddUser = () => { setEditUserId(null); setUserForm({ name: "", username: "", password: "", position: "", active: true }); setShowUserModal(true); };
-  const openEditUser = u => { setEditUserId(u.id); setUserForm({ name: u.name, username: u.username, password: u.password, position: u.position || "", active: u.active !== false }); setShowUserModal(true); };
-  const submitUser = () => {
-    if (!userForm.name || !userForm.username || !userForm.password) return addToast("Nama, username & password wajib!", "error");
-    const ownerData = load("owner_account", { username: "owner", password: "owner123" });
-    if (userForm.username === ownerData.username) return addToast("Username sudah dipakai oleh owner!", "error");
-    if (!editUserId && users.find(u => u.username === userForm.username)) return addToast("Username sudah ada!", "error");
-    if (editUserId) {
-      saveUsers(users.map(u => u.id === editUserId ? { ...u, ...userForm } : u));
-      addToast("Data karyawan diperbarui!", "success");
-    } else {
-      saveUsers([...users, { ...userForm, id: Date.now(), role: "karyawan", createdAt: Date.now() }]);
-      addToast("Karyawan berhasil ditambahkan!", "success");
-    }
-    setShowUserModal(false); setEditUserId(null);
-  };
-  const toggleUserActive = id => { saveUsers(users.map(u => u.id === id ? { ...u, active: !u.active } : u)); };
-  const deleteUser = id => { saveUsers(users.filter(u => u.id !== id)); addToast("Karyawan dihapus!", "info"); };
-
-  // --- Ganti password owner ---
-  const saveOwnerPass = () => {
-    if (!ownerForm.password || ownerForm.password !== ownerAcc.password) return addToast("Password lama salah!", "error");
-    if (!ownerForm.newPassword || ownerForm.newPassword.length < 6) return addToast("Password baru minimal 6 karakter!", "error");
-    if (ownerForm.newPassword !== ownerForm.confirmPassword) return addToast("Konfirmasi password tidak cocok!", "error");
-    const updated = { username: ownerForm.username || ownerAcc.username, password: ownerForm.newPassword };
-    setOwnerAcc(updated); save("owner_account", updated);
-    setOwnerForm({ username: updated.username, password: "", newPassword: "", confirmPassword: "" });
-    addToast("Password owner diperbarui!", "success");
-  };
-
-  // --- Jam kerja ---
-  const saveWorkHours = wh => { setWorkHours(wh); save("work_hours", wh); addToast("Jam kerja disimpan!", "success"); };
-
-  // --- Website handlers ---
-  const saveWebsites = d => { setWebsites(d); save("integrations_web", d); };
-  const openAddWeb = () => { setEditWebId(null); setWebForm({ name: "", url: "", apiKey: generateKey(), webhookUrl: "", syncKasir: true, syncStok: true, notes: "" }); setShowWebModal(true); };
-  const openEditWeb = w => { setEditWebId(w.id); setWebForm({ name: w.name, url: w.url, apiKey: w.apiKey, webhookUrl: w.webhookUrl || "", syncKasir: w.syncKasir !== false, syncStok: w.syncStok !== false, notes: w.notes || "" }); setShowWebModal(true); };
-  const submitWeb = () => {
-    if (!webForm.name || !webForm.url) return addToast("Nama & URL website wajib!", "error");
-    if (editWebId) {
-      saveWebsites(websites.map(w => w.id === editWebId ? { ...w, ...webForm, updatedAt: Date.now() } : w));
-      addToast("Integrasi diperbarui!", "success");
-    } else {
-      saveWebsites([...websites, { ...webForm, id: Date.now(), createdAt: Date.now(), status: "connected" }]);
-      addToast("Website berhasil ditautkan!", "success");
-    }
-    setShowWebModal(false); setEditWebId(null);
-  };
-  const testWebConnection = async (w) => {
-    setTestingWeb(w.id);
-    await new Promise(r => setTimeout(r, 1500));
-    setTestingWeb(null);
-    addToast(`Koneksi ke ${w.name} berhasil! ✓`, "success");
-  };
-  const deleteWeb = id => { saveWebsites(websites.filter(w => w.id !== id)); addToast("Integrasi dihapus!", "info"); };
-
-  // --- Gateway handlers ---
-  const saveGateways = d => { setGateways(d); save("payment_gateways", d); };
-  const openAddGw = () => { setEditGwId(null); setGwForm({ provider: "Midtrans", merchantId: "", serverKey: "", clientKey: "", webhookUrl: "", active: true, notifTelegram: true, notes: "" }); setShowGwModal(true); };
-  const openEditGw = g => { setEditGwId(g.id); setGwForm({ provider: g.provider, merchantId: g.merchantId, serverKey: g.serverKey, clientKey: g.clientKey, webhookUrl: g.webhookUrl || "", active: g.active !== false, notifTelegram: g.notifTelegram !== false, notes: g.notes || "" }); setShowGwModal(true); };
-  const submitGw = () => {
-    if (!gwForm.merchantId || !gwForm.serverKey) return addToast("Merchant ID & Server Key wajib!", "error");
-    if (editGwId) {
-      saveGateways(gateways.map(g => g.id === editGwId ? { ...g, ...gwForm, updatedAt: Date.now() } : g));
-      addToast("Payment gateway diperbarui!", "success");
-    } else {
-      saveGateways([...gateways, { ...gwForm, id: Date.now(), createdAt: Date.now(), totalTx: 0, totalAmount: 0 }]);
-      addToast("Payment gateway ditambahkan!", "success");
-    }
-    setShowGwModal(false); setEditGwId(null);
-  };
-  const deleteGw = id => { saveGateways(gateways.filter(g => g.id !== id)); addToast("Gateway dihapus!", "info"); };
-  const toggleGwKey = id => setShowGwKeys(s => ({ ...s, [id]: !s[id] }));
-
-  const tabStyle = active => ({ padding: "9px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, background: active ? "linear-gradient(135deg,#3b82f6,#1d4ed8)" : "#1e293b", color: active ? "#fff" : "#64748b" });
-
-  return (
-    <div>
-      <h2 style={{ color: "#f1f5f9", margin: "0 0 20px", fontSize: 22 }}>👑 Owner</h2>
-      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-        {[["akun","🏦 Rekening & Akun"],["karyawan","👥 Karyawan"],["website","🌐 Integrasi Website"],["gateway","💳 Payment Gateway"],["jam","🕐 Jam Kerja Telegram"],["owner","🔑 Akun Owner"]].map(([id,label]) => (
-          <button key={id} style={tabStyle(tab === id)} onClick={() => setTab(id)}>{label}</button>
-        ))}
-      </div>
-
-      {/* ---- TAB REKENING ---- */}
-      {tab === "akun" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div style={{ color: "#64748b", fontSize: 13 }}>Data rekening bank, e-wallet, dan kartu. Setiap perubahan memerlukan cooldown 24 jam.</div>
-            <button style={btnPrimary} onClick={openAddAcc}>+ Tambah</button>
-          </div>
-          {accounts.length === 0 && <div style={{ textAlign: "center", color: "#475569", padding: 60 }}><div style={{ fontSize: 48, marginBottom: 12 }}>🏦</div>Belum ada akun tersimpan</div>}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(290px,1fr))", gap: 16 }}>
-            {accounts.map(acc => {
-              const rem = getCooldownRemaining(acc.id); const locked = !!rem;
-              return (
-                <div key={acc.id} style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: `1px solid ${locked ? "#f59e0b44" : "#334155"}`, position: "relative" }}>
-                  {locked && <div style={{ position: "absolute", top: 0, right: 0, background: "#f59e0b", color: "#000", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: "0 14px 0 8px" }}>⏳ COOLDOWN</div>}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 11, background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{typeIcon(acc.type)}</div>
-                    <div><div style={{ color: "#f1f5f9", fontWeight: 700 }}>{acc.bank}</div><div style={{ color: "#64748b", fontSize: 12 }}>{acc.type}</div></div>
-                  </div>
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 2 }}>PEMILIK</div>
-                    <div style={{ color: "#f1f5f9", fontWeight: 600 }}>{acc.accountName}</div>
-                  </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 2 }}>NOMOR</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ color: "#3b82f6", fontWeight: 700, fontFamily: "monospace", letterSpacing: 2 }}>{showNumbers[acc.id] ? acc.accountNumber : maskNum(acc.accountNumber)}</span>
-                      <button onClick={() => setShowNumbers(s => ({ ...s, [acc.id]: !s[acc.id] }))} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>{showNumbers[acc.id] ? "🙈" : "👁️"}</button>
-                      <button onClick={() => { navigator.clipboard?.writeText(acc.accountNumber); addToast("Disalin!", "success"); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>📋</button>
-                    </div>
-                  </div>
-                  {acc.notes && <div style={{ color: "#64748b", fontSize: 12, marginBottom: 12, fontStyle: "italic" }}>📝 {acc.notes}</div>}
-                  {locked && <div style={{ background: "#f59e0b22", borderRadius: 8, padding: "7px 10px", marginBottom: 10, color: "#fbbf24", fontSize: 12 }}>⏳ Dapat diubah dalam {rem}</div>}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => openEditAcc(acc)} disabled={locked} style={{ ...btnPrimary, flex: 1, padding: "8px", fontSize: 12, opacity: locked ? 0.4 : 1 }}>✏️ Edit</button>
-                    <button onClick={() => setShowDeleteConfirm(acc.id)} disabled={locked} style={{ ...btnDanger, padding: "8px 12px", fontSize: 12, opacity: locked ? 0.4 : 1 }}>🗑️</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <Modal open={showAccModal} onClose={() => setShowAccModal(false)} title={editAccId ? "✏️ Edit Akun" : "➕ Tambah Akun"}>
-            <Field label="JENIS"><select style={inputStyle} value={accForm.type} onChange={e => setAccForm({ ...accForm, type: e.target.value })}>{ACCOUNT_TYPES.map(t => <option key={t}>{t}</option>)}</select></Field>
-            <Field label="BANK / PLATFORM"><select style={inputStyle} value={accForm.bank} onChange={e => setAccForm({ ...accForm, bank: e.target.value })}>{BANK_LIST.map(b => <option key={b}>{b}</option>)}</select></Field>
-            <Field label="NAMA PEMILIK"><input style={inputStyle} value={accForm.accountName} onChange={e => setAccForm({ ...accForm, accountName: e.target.value })} placeholder="Nama sesuai rekening" /></Field>
-            <Field label="NOMOR REKENING / AKUN"><input style={inputStyle} value={accForm.accountNumber} onChange={e => setAccForm({ ...accForm, accountNumber: e.target.value })} placeholder="Masukkan nomor..." /></Field>
-            <Field label="CATATAN"><input style={inputStyle} value={accForm.notes} onChange={e => setAccForm({ ...accForm, notes: e.target.value })} placeholder="Opsional..." /></Field>
-            {editAccId && <div style={{ background: "#f59e0b22", borderRadius: 8, padding: "10px", marginBottom: 14, color: "#fbbf24", fontSize: 13 }}>⚠️ Setelah disimpan tidak bisa diubah selama 24 jam.</div>}
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowAccModal(false)}>Batal</button>
-              <button style={btnPrimary} onClick={submitAcc}>Simpan</button>
-            </div>
-          </Modal>
-          <Modal open={!!showDeleteConfirm} onClose={() => setShowDeleteConfirm(null)} title="🗑️ Hapus Akun">
-            <p style={{ color: "#94a3b8", marginBottom: 20, fontSize: 14 }}>Yakin hapus akun ini? Tidak dapat dibatalkan.</p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowDeleteConfirm(null)}>Batal</button>
-              <button style={btnDanger} onClick={() => deleteAcc(showDeleteConfirm)}>Hapus</button>
-            </div>
-          </Modal>
-        </div>
-      )}
-
-      {/* ---- TAB KARYAWAN ---- */}
-      {tab === "karyawan" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div style={{ color: "#64748b", fontSize: 13 }}>Akun karyawan hanya bisa dibuat & diubah dari sisi owner.</div>
-            <button style={btnPrimary} onClick={openAddUser}>+ Tambah Karyawan</button>
-          </div>
-          {users.length === 0 && <div style={{ textAlign: "center", color: "#475569", padding: 60 }}><div style={{ fontSize: 48, marginBottom: 12 }}>👥</div>Belum ada karyawan</div>}
-          <div style={{ background: "#1e293b", borderRadius: 14, border: "1px solid #334155", overflow: "auto" }}>
-            {users.length > 0 && <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: "#0f172a" }}>
-                {["Nama","Username","Jabatan","Status","Aksi"].map(h => <th key={h} style={{ padding: "12px 16px", color: "#64748b", fontSize: 12, fontWeight: 600, textAlign: "left" }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {users.map(u => (
-                  <tr key={u.id} style={{ borderTop: "1px solid #0f172a" }}>
-                    <td style={{ padding: "12px 16px", color: "#f1f5f9", fontWeight: 600 }}>{u.name}</td>
-                    <td style={{ padding: "12px 16px", color: "#94a3b8", fontFamily: "monospace" }}>{u.username}</td>
-                    <td style={{ padding: "12px 16px", color: "#64748b", fontSize: 13 }}>{u.position || "-"}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <button onClick={() => toggleUserActive(u.id)} style={{ background: u.active !== false ? "#10b98122" : "#ef444422", color: u.active !== false ? "#10b981" : "#ef4444", border: "none", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                        {u.active !== false ? "✓ Aktif" : "✕ Nonaktif"}
-                      </button>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => openEditUser(u)} style={{ ...btnPrimary, padding: "6px 12px", fontSize: 12 }}>✏️</button>
-                        <button onClick={() => deleteUser(u.id)} style={{ ...btnDanger, padding: "6px 12px", fontSize: 12 }}>🗑️</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>}
-          </div>
-          <Modal open={showUserModal} onClose={() => setShowUserModal(false)} title={editUserId ? "✏️ Edit Karyawan" : "➕ Tambah Karyawan"}>
-            <Field label="NAMA LENGKAP"><input style={inputStyle} value={userForm.name} onChange={e => setUserForm({ ...userForm, name: e.target.value })} placeholder="Nama karyawan" /></Field>
-            <Field label="USERNAME"><input style={inputStyle} value={userForm.username} onChange={e => setUserForm({ ...userForm, username: e.target.value })} placeholder="username login" disabled={!!editUserId} /></Field>
-            <Field label="PASSWORD"><input type="password" style={inputStyle} value={userForm.password} onChange={e => setUserForm({ ...userForm, password: e.target.value })} placeholder="min. 6 karakter" /></Field>
-            <Field label="JABATAN / POSISI"><input style={inputStyle} value={userForm.position} onChange={e => setUserForm({ ...userForm, position: e.target.value })} placeholder="Kasir, Admin, dll" /></Field>
-            <Field label="STATUS">
-              <select style={inputStyle} value={userForm.active ? "aktif" : "nonaktif"} onChange={e => setUserForm({ ...userForm, active: e.target.value === "aktif" })}>
-                <option value="aktif">Aktif</option>
-                <option value="nonaktif">Nonaktif</option>
-              </select>
-            </Field>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowUserModal(false)}>Batal</button>
-              <button style={btnPrimary} onClick={submitUser}>Simpan</button>
-            </div>
-          </Modal>
-        </div>
-      )}
-
-      {/* ---- TAB JAM KERJA ---- */}
-      {tab === "jam" && (
-        <div style={{ maxWidth: 520 }}>
-          <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155" }}>
-            <h4 style={{ color: "#f1f5f9", margin: "0 0 6px" }}>🕐 Jam Kerja Notifikasi Telegram</h4>
-            <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 20px" }}>Bot Telegram hanya akan mengirim notifikasi transaksi dalam rentang jam kerja yang ditentukan.</p>
-            <Field label="AKTIFKAN JAM KERJA">
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <button onClick={() => setWorkHours(w => ({ ...w, enabled: !w.enabled }))} style={{ width: 48, height: 26, borderRadius: 99, border: "none", cursor: "pointer", background: workHours.enabled ? "#10b981" : "#334155", position: "relative", transition: "background 0.2s" }}>
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: workHours.enabled ? 25 : 3, transition: "left 0.2s" }} />
-                </button>
-                <span style={{ color: workHours.enabled ? "#10b981" : "#64748b", fontSize: 13, fontWeight: 600 }}>{workHours.enabled ? "Aktif" : "Nonaktif"}</span>
-              </div>
-            </Field>
-            {workHours.enabled && <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <Field label="JAM MULAI"><input type="time" style={inputStyle} value={workHours.start} onChange={e => setWorkHours(w => ({ ...w, start: e.target.value }))} /></Field>
-                <Field label="JAM SELESAI"><input type="time" style={inputStyle} value={workHours.end} onChange={e => setWorkHours(w => ({ ...w, end: e.target.value }))} /></Field>
-              </div>
-              <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 16px", marginBottom: 16, color: "#94a3b8", fontSize: 13 }}>
-                📨 Notifikasi hanya dikirim antara <strong style={{ color: "#3b82f6" }}>{workHours.start}</strong> – <strong style={{ color: "#3b82f6" }}>{workHours.end}</strong>
-              </div>
-            </>}
-            <button style={btnPrimary} onClick={() => saveWorkHours(workHours)}>💾 Simpan Pengaturan</button>
-          </div>
-        </div>
-      )}
-
-      {/* ---- TAB INTEGRASI WEBSITE ---- */}
-      {tab === "website" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div>
-              <div style={{ color: "#f1f5f9", fontWeight: 600, marginBottom: 4 }}>Tautkan Website ke Aplikasi</div>
-              <div style={{ color: "#64748b", fontSize: 13 }}>Website yang ditautkan dapat sinkronisasi data kasir & stok secara real-time via API Key.</div>
-            </div>
-            <button style={btnPrimary} onClick={openAddWeb}>+ Tautkan Website</button>
-          </div>
-
-          <div style={{ background: "#1e40af22", border: "1px solid #3b82f644", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#93c5fd", fontSize: 13 }}>
-            📡 Gunakan <strong>API Key</strong> dan <strong>Webhook URL</strong> di bawah untuk mengintegrasikan website Anda. Data pesanan masuk otomatis tercatat di kasir dan stok diperbarui.
-          </div>
-
-          {websites.length === 0 && <div style={{ textAlign: "center", color: "#475569", padding: 60 }}><div style={{ fontSize: 48, marginBottom: 12 }}>🌐</div>Belum ada website yang ditautkan</div>}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 16 }}>
-            {websites.map(w => (
-              <div key={w.id} style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🌐</div>
-                    <div>
-                      <div style={{ color: "#f1f5f9", fontWeight: 700 }}>{w.name}</div>
-                      <a href={w.url} target="_blank" rel="noreferrer" style={{ color: "#3b82f6", fontSize: 12 }}>{w.url}</a>
-                    </div>
-                  </div>
-                  <span style={{ background: "#10b98122", color: "#10b981", fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20 }}>● Terhubung</span>
-                </div>
-
-                <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                  <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>API KEY</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <code style={{ color: "#8b5cf6", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.apiKey}</code>
-                    <button onClick={() => { navigator.clipboard?.writeText(w.apiKey); addToast("API Key disalin!", "success"); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>📋</button>
-                  </div>
-                </div>
-
-                {w.webhookUrl && (
-                  <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>WEBHOOK URL</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <code style={{ color: "#f59e0b", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.webhookUrl}</code>
-                      <button onClick={() => { navigator.clipboard?.writeText(w.webhookUrl); addToast("Webhook URL disalin!", "success"); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>📋</button>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                  <div style={{ flex: 1, background: w.syncKasir !== false ? "#10b98122" : "#33415522", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>SYNC KASIR</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: w.syncKasir !== false ? "#10b981" : "#64748b" }}>{w.syncKasir !== false ? "✓ Aktif" : "✕ Off"}</div>
-                  </div>
-                  <div style={{ flex: 1, background: w.syncStok !== false ? "#3b82f622" : "#33415522", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>SYNC STOK</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: w.syncStok !== false ? "#3b82f6" : "#64748b" }}>{w.syncStok !== false ? "✓ Aktif" : "✕ Off"}</div>
-                  </div>
-                </div>
-
-                {w.notes && <div style={{ color: "#64748b", fontSize: 12, marginBottom: 12, fontStyle: "italic" }}>📝 {w.notes}</div>}
-
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => testWebConnection(w)} style={{ ...btnPrimary, background: "#1e40af", flex: 1, padding: "8px", fontSize: 12 }}>
-                    {testingWeb === w.id ? "⏳ Testing..." : "🔌 Test Koneksi"}
-                  </button>
-                  <button onClick={() => openEditWeb(w)} style={{ ...btnPrimary, padding: "8px 12px", fontSize: 12 }}>✏️</button>
-                  <button onClick={() => deleteWeb(w.id)} style={{ ...btnDanger, padding: "8px 12px", fontSize: 12 }}>🗑️</button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Panduan Integrasi */}
-          <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155", marginTop: 24 }}>
-            <h4 style={{ color: "#f1f5f9", margin: "0 0 14px" }}>📖 Panduan Integrasi API</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
-              {[
-                { icon: "1️⃣", title: "Tautkan Website", desc: "Tambahkan URL website & salin API Key yang digenerate" },
-                { icon: "2️⃣", title: "Pasang di Website", desc: "Kirim header Authorization: Bearer {API_KEY} di setiap request" },
-                { icon: "3️⃣", title: "Endpoint Pesanan", desc: "POST /api/order dengan body { items, customer, total } — otomatis masuk kasir" },
-                { icon: "4️⃣", title: "Webhook Stok", desc: "Set Webhook URL di website untuk menerima update stok real-time" },
-              ].map(s => (
-                <div key={s.title} style={{ background: "#0f172a", borderRadius: 10, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 20, marginBottom: 8 }}>{s.icon}</div>
-                  <div style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{s.title}</div>
-                  <div style={{ color: "#64748b", fontSize: 12 }}>{s.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <Modal open={showWebModal} onClose={() => setShowWebModal(false)} title={editWebId ? "✏️ Edit Integrasi" : "🌐 Tautkan Website"}>
-            <Field label="NAMA WEBSITE / TOKO"><input style={inputStyle} value={webForm.name} onChange={e => setWebForm({ ...webForm, name: e.target.value })} placeholder="Toko Online Saya" /></Field>
-            <Field label="URL WEBSITE"><input style={inputStyle} value={webForm.url} onChange={e => setWebForm({ ...webForm, url: e.target.value })} placeholder="https://tokosaya.com" /></Field>
-            <Field label="API KEY (auto-generate)">
-              <div style={{ display: "flex", gap: 8 }}>
-                <input style={{ ...inputStyle, flex: 1, fontFamily: "monospace", fontSize: 12 }} value={webForm.apiKey} onChange={e => setWebForm({ ...webForm, apiKey: e.target.value })} placeholder="API Key" />
-                <button style={{ ...btnPrimary, padding: "0 14px", fontSize: 12 }} onClick={() => setWebForm(f => ({ ...f, apiKey: generateKey() }))}>🔄 Baru</button>
-              </div>
-            </Field>
-            <Field label="WEBHOOK URL (OPSIONAL)"><input style={inputStyle} value={webForm.webhookUrl} onChange={e => setWebForm({ ...webForm, webhookUrl: e.target.value })} placeholder="https://tokosaya.com/webhook/bizflow" /></Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-              <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Sync Kasir</div>
-                <button onClick={() => setWebForm(f => ({ ...f, syncKasir: !f.syncKasir }))} style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: webForm.syncKasir ? "#10b981" : "#334155", position: "relative" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: webForm.syncKasir ? 23 : 3, transition: "left 0.2s" }} />
-                </button>
-              </div>
-              <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Sync Stok</div>
-                <button onClick={() => setWebForm(f => ({ ...f, syncStok: !f.syncStok }))} style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: webForm.syncStok ? "#3b82f6" : "#334155", position: "relative" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: webForm.syncStok ? 23 : 3, transition: "left 0.2s" }} />
-                </button>
-              </div>
-            </div>
-            <Field label="CATATAN"><input style={inputStyle} value={webForm.notes} onChange={e => setWebForm({ ...webForm, notes: e.target.value })} placeholder="Opsional..." /></Field>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowWebModal(false)}>Batal</button>
-              <button style={btnPrimary} onClick={submitWeb}>Simpan</button>
-            </div>
-          </Modal>
-        </div>
-      )}
-
-      {/* ---- TAB PAYMENT GATEWAY ---- */}
-      {tab === "gateway" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div>
-              <div style={{ color: "#f1f5f9", fontWeight: 600, marginBottom: 4 }}>Payment Gateway</div>
-              <div style={{ color: "#64748b", fontSize: 13 }}>Terima notifikasi pembayaran otomatis dari berbagai payment gateway.</div>
-            </div>
-            <button style={btnPrimary} onClick={openAddGw}>+ Tambah Gateway</button>
-          </div>
-
-          <div style={{ background: "#14532d22", border: "1px solid #16a34a44", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#86efac", fontSize: 13 }}>
-            💳 Setiap pembayaran yang masuk akan otomatis dicatat sebagai <strong>Pemasukan</strong> dan dikirim notifikasi ke <strong>Telegram</strong> (jika diaktifkan).
-          </div>
-
-          {gateways.length === 0 && <div style={{ textAlign: "center", color: "#475569", padding: 60 }}><div style={{ fontSize: 48, marginBottom: 12 }}>💳</div>Belum ada payment gateway</div>}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 16 }}>
-            {gateways.map(g => (
-              <div key={g.id} style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: `1px solid ${g.active !== false ? "#10b98144" : "#334155"}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 11, background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
-                      {{"Midtrans":"🟢","Xendit":"🔵","Doku":"🟣","Stripe":"🟡","PayPal":"🔷","Manual/COD":"📦"}[g.provider] || "💳"}
-                    </div>
-                    <div>
-                      <div style={{ color: "#f1f5f9", fontWeight: 700 }}>{g.provider}</div>
-                      <div style={{ color: "#64748b", fontSize: 12 }}>Merchant: {g.merchantId || "-"}</div>
-                    </div>
-                  </div>
-                  <span style={{ background: g.active !== false ? "#10b98122" : "#ef444422", color: g.active !== false ? "#10b981" : "#ef4444", fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20 }}>
-                    {g.active !== false ? "● Aktif" : "○ Nonaktif"}
-                  </span>
-                </div>
-
-                <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ color: "#64748b", fontSize: 11 }}>SERVER KEY</span>
-                    <button onClick={() => toggleGwKey(g.id)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12 }}>{showGwKeys[g.id] ? "🙈 Sembunyikan" : "👁️ Tampilkan"}</button>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <code style={{ color: "#8b5cf6", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {showGwKeys[g.id] ? g.serverKey : "•".repeat(Math.min(32, g.serverKey?.length || 8))}
-                    </code>
-                    <button onClick={() => { navigator.clipboard?.writeText(g.serverKey); addToast("Server Key disalin!", "success"); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>📋</button>
-                  </div>
-                </div>
-
-                {g.webhookUrl && (
-                  <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
-                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>WEBHOOK ENDPOINT</div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <code style={{ color: "#f59e0b", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.webhookUrl}</code>
-                      <button onClick={() => { navigator.clipboard?.writeText(g.webhookUrl); addToast("Disalin!", "success"); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>📋</button>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                  <div style={{ flex: 1, background: "#0f172a", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>TOTAL TRANSAKSI</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#3b82f6" }}>{g.totalTx || 0}</div>
-                  </div>
-                  <div style={{ flex: 1, background: "#0f172a", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>TOTAL MASUK</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#10b981" }}>{formatRp(g.totalAmount || 0)}</div>
-                  </div>
-                  <div style={{ flex: 1, background: g.notifTelegram !== false ? "#10b98122" : "#0f172a", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#64748b" }}>NOTIF TG</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: g.notifTelegram !== false ? "#10b981" : "#64748b" }}>{g.notifTelegram !== false ? "✓ On" : "✕ Off"}</div>
-                  </div>
-                </div>
-
-                {g.notes && <div style={{ color: "#64748b", fontSize: 12, marginBottom: 12, fontStyle: "italic" }}>📝 {g.notes}</div>}
-
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => openEditGw(g)} style={{ ...btnPrimary, flex: 1, padding: "8px", fontSize: 12 }}>✏️ Edit</button>
-                  <button onClick={() => deleteGw(g.id)} style={{ ...btnDanger, padding: "8px 12px", fontSize: 12 }}>🗑️</button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Simulasi notif pembayaran masuk */}
-          {gateways.some(g => g.active !== false) && (
-            <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155", marginTop: 24 }}>
-              <h4 style={{ color: "#f1f5f9", margin: "0 0 14px" }}>🧪 Simulasi Notifikasi Pembayaran</h4>
-              <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>Simulasikan penerimaan notifikasi pembayaran dari gateway aktif untuk testing.</p>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {gateways.filter(g => g.active !== false).map(g => (
-                  <button key={g.id} style={{ ...btnSuccess, fontSize: 13 }} onClick={() => {
-                    const amount = Math.floor(Math.random() * 500 + 1) * 1000;
-                    const orderId = "ORD-" + Date.now().toString().slice(-6);
-                    addToast(`💳 Pembayaran masuk via ${g.provider}! Order ${orderId} — ${formatRp(amount)}`, "success");
-                    const updated = gateways.map(x => x.id === g.id ? { ...x, totalTx: (x.totalTx || 0) + 1, totalAmount: (x.totalAmount || 0) + amount } : x);
-                    saveGateways(updated);
-                  }}>
-                    💳 Simulasi {g.provider}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <Modal open={showGwModal} onClose={() => setShowGwModal(false)} title={editGwId ? "✏️ Edit Gateway" : "💳 Tambah Payment Gateway"}>
-            <Field label="PROVIDER">
-              <select style={inputStyle} value={gwForm.provider} onChange={e => setGwForm({ ...gwForm, provider: e.target.value })}>
-                {["Midtrans","Xendit","Doku","Stripe","PayPal","Manual/COD"].map(p => <option key={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="MERCHANT ID / ACCOUNT ID"><input style={inputStyle} value={gwForm.merchantId} onChange={e => setGwForm({ ...gwForm, merchantId: e.target.value })} placeholder="Merchant ID dari dashboard gateway" /></Field>
-            <Field label="SERVER KEY / SECRET KEY"><input type="password" style={inputStyle} value={gwForm.serverKey} onChange={e => setGwForm({ ...gwForm, serverKey: e.target.value })} placeholder="Server Key (rahasia)" /></Field>
-            <Field label="CLIENT KEY / PUBLIC KEY"><input style={inputStyle} value={gwForm.clientKey} onChange={e => setGwForm({ ...gwForm, clientKey: e.target.value })} placeholder="Client Key (opsional)" /></Field>
-            <Field label="WEBHOOK URL NOTIFIKASI"><input style={inputStyle} value={gwForm.webhookUrl} onChange={e => setGwForm({ ...gwForm, webhookUrl: e.target.value })} placeholder="https://domain.com/webhook/payment" /></Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-              <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Status Aktif</div>
-                <button onClick={() => setGwForm(f => ({ ...f, active: !f.active }))} style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: gwForm.active ? "#10b981" : "#334155", position: "relative" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: gwForm.active ? 23 : 3, transition: "left 0.2s" }} />
-                </button>
-              </div>
-              <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Notif Telegram</div>
-                <button onClick={() => setGwForm(f => ({ ...f, notifTelegram: !f.notifTelegram }))} style={{ width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer", background: gwForm.notifTelegram ? "#3b82f6" : "#334155", position: "relative" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: gwForm.notifTelegram ? 23 : 3, transition: "left 0.2s" }} />
-                </button>
-              </div>
-            </div>
-            <Field label="CATATAN"><input style={inputStyle} value={gwForm.notes} onChange={e => setGwForm({ ...gwForm, notes: e.target.value })} placeholder="Opsional..." /></Field>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={{ ...btnPrimary, background: "#334155" }} onClick={() => setShowGwModal(false)}>Batal</button>
-              <button style={btnPrimary} onClick={submitGw}>Simpan</button>
-            </div>
-          </Modal>
-        </div>
-      )}
-
-      {/* ---- TAB AKUN OWNER ---- */}
-      {tab === "owner" && (
-        <div style={{ maxWidth: 480 }}>
-          <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155" }}>
-            <h4 style={{ color: "#f1f5f9", margin: "0 0 20px" }}>🔑 Ubah Password Owner</h4>
-            <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 13 }}>
-              <span style={{ color: "#64748b" }}>Username saat ini: </span>
-              <span style={{ color: "#3b82f6", fontWeight: 700, fontFamily: "monospace" }}>{ownerAcc.username}</span>
-            </div>
-            <Field label="USERNAME BARU (OPSIONAL)"><input style={inputStyle} value={ownerForm.username} onChange={e => setOwnerForm({ ...ownerForm, username: e.target.value })} placeholder={ownerAcc.username} /></Field>
-            <Field label="PASSWORD LAMA">
-              <div style={{ position: "relative" }}>
-                <input type={showOwnerPass ? "text" : "password"} style={{ ...inputStyle, paddingRight: 40 }} value={ownerForm.password} onChange={e => setOwnerForm({ ...ownerForm, password: e.target.value })} placeholder="••••••" />
-                <button onClick={() => setShowOwnerPass(s => !s)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>{showOwnerPass ? "🙈" : "👁️"}</button>
-              </div>
-            </Field>
-            <Field label="PASSWORD BARU (min. 6 karakter)"><input type="password" style={inputStyle} value={ownerForm.newPassword} onChange={e => setOwnerForm({ ...ownerForm, newPassword: e.target.value })} placeholder="••••••" /></Field>
-            <Field label="KONFIRMASI PASSWORD BARU"><input type="password" style={inputStyle} value={ownerForm.confirmPassword} onChange={e => setOwnerForm({ ...ownerForm, confirmPassword: e.target.value })} placeholder="••••••" /></Field>
-            <button style={btnPrimary} onClick={saveOwnerPass}>💾 Simpan Password</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ==================== MAIN APP ====================
-export default function App() {
-    // ==================== STATE SISTEM KEAMANAN CLOUD ====================
-  const [cloudSettings, setCloudSettings] = useState({
-    is_cooldown_active: false,
-    cooldown_expires_at: null,
-    id: 1
-  });
-  const [securityLoading, setSecurityLoading] = useState(true);
-  const [inputBypassCode, setInputBypassCode] = useState("");
-
-  // State Pendukung untuk Mengunci Alur Penggantian Bot Telegram
-  const [oldBotCode, setOldBotCode] = useState("");
-  const [inputOldBotVerify, setInputOldBotVerify] = useState("");
-  const [isVerifyingOldBot, setIsVerifyingOldBot] = useState(false);
-  const [pendingNewTg, setPendingNewTg] = useState(null);
-
-  const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
-
-  // Fungsi mengecek status keamanan toko langsung dari Supabase Cloud
-  const checkCloudSecurityStatus = async () => {
-    try {
-      setSecurityLoading(true);
-      const { data, error } = await supabase
-        .from('store_settings')
-        .select('*')
-        .limit(1)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-
-      if (data) {
-        const sekarang = new Date();
-        const expiresAt = data.cooldown_expires_at ? new Date(data.cooldown_expires_at) : null;
-
-        if (data.is_cooldown_active && expiresAt && sekarang > expiresAt) {
-          await supabase
-            .from('store_settings')
-            .update({ is_cooldown_active: false, cooldown_expires_at: null, bypass_code: null })
-            .eq('id', data.id);
-          
-          setCloudSettings({ ...data, is_cooldown_active: false, cooldown_expires_at: null });
-        } else {
-          setCloudSettings(data);
-        }
-      }
-    } catch (err) {
-      console.error("Gagal memeriksa otentikasi awan:", err.message);
-    } finally {
-      setSecurityLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    checkCloudSecurityStatus();
-  }, []);
-
-  // Fungsi mengunci sistem secara terpusat ke cloud & mengirim kode bypass ke Telegram Owner
-  const triggerFraudSuspension = async (alasan) => {
-    const sekarang = new Date();
-    const expiresAt = new Date(sekarang.getTime() + 24 * 60 * 60 * 1000); // 24 Jam penuh
-    const otpBypass = generateOTP();
-
-    try {
-      const { error } = await supabase
-        .from('store_settings')
-        .update({
-          is_cooldown_active: true,
-          cooldown_expires_at: expiresAt.toISOString(),
-          bypass_code: otpBypass
-        })
-        .match({ id: cloudSettings.id || 1 });
-
-      if (error) throw error;
-
-      const pesanTelegram = `🚨 <b>PERINGATAN SEKURITAS BIZFLOW PRO</b> 🚨\n\n` +
-        `Sistem mendeteksi aktivitas sensitif: <b>${alasan}</b> pada device toko.\n\n` +
-        `🔒 <b>Status:</b> Semua transaksi kasir & online telah DIBEKUKAN total.\n` +
-        `⏳ <b>Masa Cooldown:</b> 1x24 Jam (Sampai ${expiresAt.toLocaleString('id-ID')}).\n\n` +
-        `🔑 <b>KODE BYPASS KHUSUS OWNER:</b> <code>${otpBypass}</code>\n\n` +
-        `<i>Jika Anda (Owner) yang mengubah data tersebut, silakan salin kode di atas dan masukkan ke Menu Owner untuk membuka gembok seketika.</i>`;
-
-      await sendTelegram(tg.token, tg.chatId, pesanTelegram);
-      await checkCloudSecurityStatus();
-      addToast("🔒 Akses dibekukan! Terdeteksi modifikasi data sensitif.", "error");
-    } catch (err) {
-      console.error("Gagal mengaktifkan siber-gembok:", err.message);
-    }
-  };
-
-  // Fungsi untuk memproses input kode dari Owner guna membuka gembok secara instan
-  const handleOwnerBypass = async () => {
-    if (!inputBypassCode) return addToast("Masukkan kode verifikasi!", "error");
-
-    try {
-      const { data, error } = await supabase
-        .from('store_settings')
-        .select('bypass_code, id')
-        .eq('id', cloudSettings.id)
-        .single();
-
-      if (error) throw error;
-
-      if (data && data.bypass_code === inputBypassCode.trim()) {
-        await supabase
-          .from('store_settings')
-          .update({ is_cooldown_active: false, cooldown_expires_at: null, bypass_code: null })
-          .eq('id', cloudSettings.id);
-
-        setInputBypassCode("");
-        await checkCloudSecurityStatus();
-        addToast("🔓 Kunci bypass berhasil! Sistem transaksi kembali normal.", "success");
-      } else {
-        addToast("Kode bypass salah! Akses ditolak.", "error");
-      }
-    } catch (err) {
-      addToast("Gagal melakukan bypass: " + err.message, "error");
-    }
-  };
-
-  // Fungsi: Mengirim OTP ke Bot Lama saat ada upaya penggantian bot
-  const requestChangeTelegramBot = async (newToken, newChatId) => {
-    if (!tg.token || !tg.chatId) {
-      const updated = { token: newToken, chatId: newChatId };
-      setTg(updated);
-      save("tg", updated);
-      addToast("Bot Telegram berhasil diinisialisasi!", "success");
-      return;
-    }
-
-    const kodeVerifikasiOldBot = generateOTP();
-    setOldBotCode(kodeVerifikasiOldBot);
-    setPendingNewTg({ token: newToken, chatId: newChatId });
-    setIsVerifyingOldBot(true);
-
-    try {
-      await supabase
-        .from('store_settings')
-        .update({ old_bot_verification_code: kodeVerifikasiOldBot })
-        .eq('id', cloudSettings.id);
-
-      const teksVerifikasi = `🛡️ <b>PERMINTAAN PERUBAHAN BOT OWNER</b> 🛡️\n\n` +
-        `Ada upaya untuk mengganti konfigurasi Bot Telegram pada sistem kasir.\n\n` +
-        `🔑 <b>KODE VERIFIKASI BOT LAMA:</b> <code>${kodeVerifikasiOldBot}</code>\n\n` +
-        `<i>Masukkan kode ini ke aplikasi untuk menyetujui dan mengonfirmasi perubahan ke bot baru.</i>`;
-
-      await sendTelegram(tg.token, tg.chatId, teksVerifikasi);
-      addToast("🔑 Kode verifikasi telah dikirim ke Bot Telegram lama Anda!", "info");
-    } catch (err) {
-      console.error("Gagal mengirim verifikasi bot lama:", err.message);
-    }
-  };
-
-  // Fungsi: Konfirmasi pencocokan OTP untuk meresmikan Bot Baru
-  const confirmChangeTelegramBot = async () => {
-    if (inputOldBotVerify.trim() === oldBotCode) {
-      setTg(pendingNewTg);
-      save("tg", pendingNewTg);
-      
-      await supabase
-        .from('store_settings')
-        .update({ old_bot_verification_code: null })
-        .eq('id', cloudSettings.id);
-
-      setIsVerifyingOldBot(false);
-      setOldBotCode("");
-      setInputOldBotVerify("");
-      setPendingNewTg(null);
-      addToast("✅ Bot Telegram Owner berhasil diperbarui!", "success");
-    } else {
-      addToast("Kode verifikasi salah! Perubahan Bot digagalkan.", "error");
-      await triggerFraudSuspension("Percobaan penggantian Bot Telegram tanpa izin");
-    }
-  };
-
-  const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState(() => load("session_user", null));
-  const [active, setActive] = useState("dashboard");
-  const [sideOpen, setSideOpen] = useState(true);
-  const [biz, setBiz] = useState(() => load("biz", {}));
-    const [cloudSettings, setCloudSettings] = useState({ is_cooldown_active: false });
-  const [inputBypassCode, setInputBypassCode] = useState("");
-  const [isVerifyingOldBot, setIsVerifyingOldBot] = useState(false);
-  const [inputOldBotVerify, setInputOldBotVerify] = useState("");
-
-  useEffect(() => {
-    const checkCloudSecurity = async () => {
+  const triggerImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
       try {
-        const { data } = await supabase
-          .from('store_settings')
-          .select('is_cooldown_active')
-          .eq('id', 1)
-          .single();
-
-        if (data && data.is_cooldown_active) {
-          setCloudSettings({ is_cooldown_active: true });
+        const parsed = JSON.parse(evt.target.result);
+        if (parsed.income || parsed.inventory) {
+          Object.keys(parsed).forEach(k => saveLocal(k, parsed[k]));
+          addToast("Backup lokal berhasil dipulihkan! Muat ulang halaman.", "success");
+          setTimeout(() => window.location.reload(), 1500);
         }
       } catch (err) {
-        console.log("Status cloud aman / Belum aktif");
+        addToast("Struktur file backup rusak/tidak valid", "error");
       }
     };
-    checkCloudSecurity();
-  }, []);
-
-  const [income, setIncome] = useState(() => load("income", []));
-  const [expense, setExpense] = useState(() => load("expense", []));
-  const [inventory, setInventory] = useState(() => load("inventory", []));
-  const [tg, setTg] = useState(() => load("telegram", { token: "", chatId: "" }));
-  const [toasts, setToasts] = useState([]);
-
-  const addToast = useCallback((msg, type = "info") => {
-    const id = Date.now();
-    setToasts(t => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
-  }, []);
-
-  const handleLogin = (user) => { setCurrentUser(user); save("session_user", user); setActive("dashboard"); };
-  const handleLogout = () => { setCurrentUser(null); save("session_user", null); setActive("dashboard"); };
-
-  if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
-  if (!currentUser) return <LoginScreen onLogin={handleLogin} />;
-
-  const isOwner = currentUser.role === "owner";
-  const NAV = isOwner ? NAV_OWNER : NAV_KARYAWAN;
-
-  // Wrap sendTelegram dengan pengecekan jam kerja
-  const workHours = load("work_hours", { enabled: false, start: "08:00", end: "17:00" });
-  const sendTelegramWithWorkHours = async (token, chatId, text) => {
-    if (workHours.enabled) {
-      const now = new Date();
-      const [sh, sm] = workHours.start.split(":").map(Number);
-      const [eh, em] = workHours.end.split(":").map(Number);
-      const nowMin = now.getHours() * 60 + now.getMinutes();
-      const startMin = sh * 60 + sm;
-      const endMin = eh * 60 + em;
-      if (nowMin < startMin || nowMin > endMin) return { ok: false, error: "Di luar jam kerja" };
-    }
-    return sendTelegram(token, chatId, text);
-  };
-
-  const sharedProps = { income, setIncome, expense, setExpense, inventory, setInventory, tg, setTg, biz, setBiz, addToast, sendTg: sendTelegramWithWorkHours };
-
-  const pages = {
-    dashboard: <Dashboard {...sharedProps} />,
-    cashflow: <CashFlow {...sharedProps} />,
-    kasir: <Kasir income={income} setIncome={setIncome} inventory={inventory} setInventory={setInventory} tg={tg} biz={biz} addToast={addToast} sendTg={sendTelegramWithWorkHours} />,
-    inventory: <Inventory income={income} setIncome={setIncome} expense={expense} setExpense={setExpense} inventory={inventory} setInventory={setInventory} tg={tg} biz={biz} addToast={addToast} sendTg={sendTelegramWithWorkHours} />,
-    invoice: <Invoice {...sharedProps} />,
-    reports: <Reports {...sharedProps} />,
-    telegram: <TelegramSettings {...sharedProps} />,
-    owner: <OwnerPage addToast={addToast} tg={tg} setTg={setTg} />,
-    settings: <Settings {...sharedProps} />,
+    reader.readAsText(file);
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0f1e", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <style>{`
-        @keyframes slideIn { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-        @keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
-        @keyframes floatUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}
-        input[type=range]{accent-color:#3b82f6}
-        select option{background:#1e293b}
-      `}</style>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+        <h4 style={{ margin: "0 0 12px", color: "#fff" }}>⚙️ Profil Workshop & Bengkel</h4>
+        <input style={{ ...inputStyle, marginBottom: 10 }} value={bForm.name || ""} placeholder="Nama Bengkel" onChange={e => setBForm({...bForm, name: e.target.value})} />
+        <input style={{ ...inputStyle, marginBottom: 12 }} value={bForm.owner || ""} placeholder="Nama Pemilik" onChange={e => setBForm({...bForm, owner: e.target.value})} />
+        <button onClick={() => { setBiz(bForm); saveAndSync("biz", bForm); addToast("Profil di-update!", "success"); }} style={{ ...btnStyle, background: "#3b82f6", color: "#fff" }}>Simpan Profil</button>
+      </div>
 
-      {/* Sidebar */}
-      <>
-        {sideOpen && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 40 }} onClick={() => setSideOpen(false)} />}
-        <aside style={{ position: "fixed", left: sideOpen ? 0 : -260, top: 0, bottom: 0, width: 240, background: "#0f172a", borderRight: "1px solid #1e293b", zIndex: 50, transition: "left 0.3s ease", display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "20px 20px 16px", borderBottom: "1px solid #1e293b" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {biz.logo ? <img src={biz.logo} alt="logo" style={{ width: 38, height: 38, borderRadius: 9, objectFit: "cover" }} /> : <div style={{ width: 38, height: 38, borderRadius: 9, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>💼</div>}
-              <div>
-                <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 13 }}>{biz.name || "Bisnis Saya"}</div>
-                <div style={{ color: "#64748b", fontSize: 10 }}>{biz.owner || "Owner"}</div>
-              </div>
-            </div>
-          </div>
-          <div style={{ padding: "10px 10px 6px", borderBottom: "1px solid #1e293b" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#1e293b", borderRadius: 8 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: isOwner ? "linear-gradient(135deg,#f59e0b,#d97706)" : "linear-gradient(135deg,#3b82f6,#1d4ed8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>{isOwner ? "👑" : "👤"}</div>
-              <div>
-                <div style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 600 }}>{currentUser.name || currentUser.username}</div>
-                <div style={{ color: "#64748b", fontSize: 10, textTransform: "capitalize" }}>{currentUser.role}</div>
-              </div>
-            </div>
-          </div>
-          <nav style={{ flex: 1, padding: "10px 10px", overflowY: "auto" }}>
-            {NAV.map(n => (
-              <button key={n.id} onClick={() => { setActive(n.id); setSideOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", borderRadius: 10, border: "none", cursor: "pointer", background: active === n.id ? "linear-gradient(135deg,#3b82f6,#1d4ed8)" : "none", color: active === n.id ? "#fff" : "#64748b", fontSize: 14, fontWeight: 500, marginBottom: 2, textAlign: "left" }}>
-                <span>{n.icon}</span><span>{n.label}</span>
-              </button>
-            ))}
-          </nav>
-          <div style={{ padding: "12px 16px", borderTop: "1px solid #1e293b" }}>
-            <button onClick={handleLogout} style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", background: "#1e293b", color: "#ef4444", fontSize: 13, fontWeight: 600 }}>🚪 Keluar</button>
-          </div>
-          <div style={{ padding: "8px 16px", color: "#1e293b", fontSize: 11, textAlign: "center" }}>BizFlow Pro v2.0</div>
-        </aside>
-      </>
+      <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+        <h4 style={{ margin: "0 0 12px", color: "#fff" }}>✈️ Log Integrasi Telegram</h4>
+        <input type="password" style={{ ...inputStyle, marginBottom: 10 }} value={tForm.token || ""} placeholder="Bot Token Telegram" onChange={e => setTForm({...tForm, token: e.target.value})} />
+        <input style={{ ...inputStyle, marginBottom: 12 }} value={tForm.chatId || ""} placeholder="Chat ID Target" onChange={e => setTForm({...tForm, chatId: e.target.value})} />
+        <button onClick={() => { setTg(tForm); saveAndSync("tg", tForm); addToast("Koneksi Telegram disimpan!", "success"); }} style={{ ...btnStyle, background: "#3b82f6", color: "#fff" }}>Simpan Akses</button>
+      </div>
 
-      <header style={{ position: "fixed", top: 0, left: sideOpen ? 240 : 0, right: 0, height: 60, background: "#0f172a", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", padding: "0 20px", zIndex: 30, transition: "left 0.3s ease", gap: 14 }}>
-        <button onClick={() => setSideOpen(s => !s)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 20, padding: 4 }}>☰</button>
-        <span style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 16 }}>
-          {NAV.find(n => n.id === active)?.icon} {NAV.find(n => n.id === active)?.label}
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ color: "#64748b", fontSize: 13 }}>{new Date().toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
-          {tg.token && <span style={{ background: "#10b98122", color: "#10b981", padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>✈️ Telegram Aktif</span>}
+      <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
+        <h4 style={{ margin: "0 0 4px", color: "#fff" }}>💾 Manajemen Ketahanan Data Offline</h4>
+        <p style={{ fontSize: 11, color: "#64748b", marginBottom: 14 }}>Gunakan ini jika ingin mengamankan file backup manual di luar cloud Supabase.</p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={triggerExport} style={{ ...btnStyle, background: "#10b981", color: "#fff" }}>📤 Export JSON</button>
+          <label style={{ ...btnStyle, background: "#8b5cf6", color: "#fff", display: "inline-block", textAlign: "center" }}>
+            📥 Import JSON
+            <input type="file" accept=".json" onChange={triggerImport} style={{ display: "none" }} />
+          </label>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== APP CORE ENGINE ====================
+export default function App() {
+  const [loading, setLoading] = useState(true);
+  const [active, setActive] = useState("dashboard");
+  const [sideOpen, setSideOpen] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  // State Utama Aplikasi (Mengambil dari LocalStorage sebagai buffer awal offline)
+  const [biz, setBiz] = useState(() => loadLocal("biz", { name: "Sumber Rezeki", owner: "Mochamad Budi" }));
+  const [income, setIncome] = useState(() => loadLocal("income", []));
+  const [expense, setExpense] = useState(() => loadLocal("expense", []));
+  const [inventory, setInventory] = useState(() => loadLocal("inventory", []));
+  const [tg, setTg] = useState(() => loadLocal("tg", { token: "", chatId: "" }));
+
+  const addToast = useCallback((msg, type = "success") => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+  }, []);
+
+  // FIX #1 & #2: Mekanisme Sinkronisasi Dual-Layer (Lokal Cepat + Cloud Supabase Latar Belakang)
+  const saveAndSync = async (key, val) => {
+    // 1. Simpan secepat kilat ke lokal HP agar performa mulus tanpa hambatan internet
+    saveLocal(key, val);
+
+    // 2. Kirim sinkronisasi ke cloud Supabase di background secara asinkron
+    try {
+      const targetTable = key === "tg" ? "telegram_config" : key === "biz" ? "biz_profile" : key;
+      
+      const { error } = await supabase
+        .from(targetTable)
+        .upsert({ 
+          id: 1, // ID Tunggal untuk data ERP Personal Workshop
+          updated_at: new Date().toISOString(),
+          data_payload: val 
+        });
+
+      if (error) throw error;
+    } catch (err) {
+      console.warn(`[Cloud Offline] Gagal sinkronisasi ${key} ke Supabase, data aman di penyimpanan lokal HP.`);
+    }
+  };
+
+  // Ambil data terbaru dari cloud saat aplikasi pertama dibuka
+  useEffect(() => {
+    const fetchCloudData = async () => {
+      try {
+        const tables = ["biz_profile", "income", "expense", "inventory", "telegram_config"];
+        for (const tbl of tables) {
+          const { data, error } = await supabase.from(tbl).select("data_payload").eq("id", 1).single();
+          if (data && data.data_payload) {
+            const localKey = tbl === "biz_profile" ? "biz" : tbl === "telegram_config" ? "tg" : tbl;
+            saveLocal(localKey, data.data_payload);
+            if (localKey === "biz") setBiz(data.data_payload);
+            if (localKey === "income") setIncome(data.data_payload);
+            if (localKey === "expense") setExpense(data.data_payload);
+            if (localKey === "inventory") setInventory(data.data_payload);
+            if (localKey === "tg") setTg(data.data_payload);
+          }
+        }
+      } catch (err) {
+        console.log("Menjalankan aplikasi dalam mode offline penuh menggunakan data lokal.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCloudData();
+  }, []);
+
+  if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
+
+  return (
+    <div style={{ background: "#0a0f1e", minHeight: "100vh", color: "#f1f5f9", fontFamily: "system-ui, sans-serif" }}>
+      <Toast toasts={toasts} />
+
+      {/* Sidebar Navigation */}
+      <aside style={{ position: "fixed", left: sideOpen ? 0 : -240, top: 0, bottom: 0, width: 220, background: "#0f172a", borderRight: "1px solid #1e293b", zIndex: 100, transition: "left 0.2s ease", padding: 16 }}>
+        <h3 style={{ color: "#3b82f6", margin: "0 0 20px" }}>BizFlow Navigation</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={() => { setActive("dashboard"); setSideOpen(false); }} style={{ ...btnStyle, background: active === "dashboard" ? "#3b82f6" : "transparent", color: "#fff", textAlign: "left" }}>📊 Dashboard</button>
+          <button onClick={() => { setActive("kasir"); setSideOpen(false); }} style={{ ...btnStyle, background: active === "kasir" ? "#3b82f6" : "transparent", color: "#fff", textAlign: "left" }}>🛒 Mesin Kasir</button>
+          <button onClick={() => { setActive("cashflow"); setSideOpen(false); }} style={{ ...btnStyle, background: active === "cashflow" ? "#3b82f6" : "transparent", color: "#fff", textAlign: "left" }}>💰 Arus Kas / Cash</button>
+          <button onClick={() => { setActive("inventory"); setSideOpen(false); }} style={{ ...btnStyle, background: active === "inventory" ? "#3b82f6" : "transparent", color: "#fff", textAlign: "left" }}>📦 Stok Material</button>
+          <button onClick={() => { setActive("settings"); setSideOpen(false); }} style={{ ...btnStyle, background: active === "settings" ? "#3b82f6" : "transparent", color: "#fff", textAlign: "left" }}>⚙️ Pengaturan</button>
+        </div>
+      </aside>
+
+      {/* Header Bar */}
+      <header style={{ background: "#0f172a", height: 56, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: "1px solid #1e293b", sticky: "top" }}>
+        <button onClick={() => setSideOpen(!sideOpen)} style={{ background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" }}>☰</button>
+        <span style={{ marginLeft: 16, fontWeight: 600, fontSize: 14, textTransform: "uppercase", letterSpacing: 0.5 }}>{active}</span>
       </header>
 
-      <main style={{ marginLeft: sideOpen ? 240 : 0, marginTop: 60, padding: 24, transition: "margin-left 0.3s ease", minHeight: "calc(100vh - 60px)" }}>
-        {pages[active] || <div style={{ color: "#475569", textAlign: "center", padding: 60 }}>Halaman tidak ditemukan</div>}
+      {/* Area Konten Utama ERP */}
+      <main style={{ padding: 20, maxWidth: 1000, margin: "0 auto" }}>
+        {active === "dashboard" && <Dashboard income={income} expense={expense} inventory={inventory} biz={biz} />}
+        {active === "kasir" && <Kasir inventory={inventory} setInventory={setInventory} income={income} setIncome={setIncome} addToast={addToast} tg={tg} biz={biz} saveAndSync={saveAndSync} />}
+        {active === "cashflow" && <CashFlow income={income} setIncome={setIncome} expense={expense} setExpense={setExpense} addToast={addToast} saveAndSync={saveAndSync} />}
+        {active === "inventory" && <Inventory inventory={inventory} setInventory={setInventory} addToast={addToast} saveAndSync={saveAndSync} />}
+        {active === "settings" && <Settings biz={biz} setBiz={setBiz} tg={tg} setTg={setTg} saveAndSync={saveAndSync} addToast={addToast} />}
       </main>
-
-      {/* ==================== SCREEN OVERLAY LOCK (GEMBOK 1X24 JAM) ==================== */}
-      {cloudSettings.is_cooldown_active && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          backgroundColor: "rgba(15, 23, 42, 0.98)",
-          zIndex: 99999,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-          textAlign: "center",
-          color: "#f1f5f9",
-          fontFamily: "sans-serif"
-        }}>
-          <div style={{ fontSize: "64px", marginBottom: "16px" }}>🔒</div>
-          <h1 style={{ fontSize: "24px", fontWeight: "bold", color: "#ef4444", marginBottom: "8px" }}>
-            AKSES APLIKASI DIBEKUKAN TOTAL
-          </h1>
-          <p style={{ fontSize: "14px", color: "#94a3b8", maxWidth: "400px", marginBottom: "24px" }}>
-            Sistem mendeteksi adanya modifikasi data sensitif tanpa otentikasi aman. Aplikasi dikunci selama 1x24 jam demi keamanan data toko Anda.
-          </p>
-          
-          <div style={{ 
-            backgroundColor: "#1e293b", 
-            padding: "20px", 
-            borderRadius: "12px", 
-            width: "100%", 
-            maxWidth: "340px",
-            border: "1px solid #334155" 
-          }}>
-            <label style={{ display: "block", fontSize: "12px", color: "#cbd5e1", textAlign: "left", marginBottom: "8px", fontWeight: "600" }}>
-              KODE BYPASS VERIFIKASI OWNER:
-            </label>
-            <input 
-              type="text" 
-              placeholder="Masukkan kode OTP..." 
-              value={inputBypassCode}
-              onChange={(e) => setInputBypassCode(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "8px",
-                backgroundColor: "#0f172a",
-                border: "1px solid #475569",
-                color: "#fff",
-                fontSize: "16px",
-                textAlign: "center",
-                letterSpacing: "2px",
-                marginBottom: "12px"
-              }}
-            />
-            <button 
-              onClick={handleOwnerBypass}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "8px",
-                backgroundColor: "#22c55e",
-                color: "#fff",
-                fontWeight: "bold",
-                cursor: "pointer",
-                border: "none"
-              }}
-            >
-              🔓 Buka Gembok Aplikasi
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== MODAL VERIFIKASI BOT TELEGRAM LAMA ==================== */}
-      {isVerifyingOldBot && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          backgroundColor: "rgba(0, 0, 0, 0.75)",
-          zIndex: 99998,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "16px"
-        }}>
-          <div style={{
-            backgroundColor: "#1e293b",
-            padding: "24px",
-            borderRadius: "16px",
-            width: "100%",
-            maxWidth: "360px",
-            color: "#fff",
-            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)",
-            border: "1px solid #334155"
-          }}>
-            <h3 style={{ fontSize: "18px", fontWeight: "bold", color: "#e2e8f0", marginBottom: "8px", textAlign: "center" }}>
-              🛡️ Verifikasi Bot Lama
-            </h3>
-            <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px", textAlign: "center" }}>
-              Kode OTP keamanan telah dikirim ke Bot Telegram Owner yang aktif sebelumnya.
-            </p>
-            <input 
-              type="text"
-              placeholder="Masukkan kode..."
-              value={inputOldBotVerify}
-              onChange={(e) => setInputOldBotVerify(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "8px",
-                backgroundColor: "#0f172a",
-                border: "1px solid #475569",
-                color: "#fff",
-                fontSize: "16px",
-                textAlign: "center",
-                marginBottom: "16px"
-              }}
-            />
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button 
-                onClick={() => setIsVerifyingOldBot(false)}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: "8px",
-                  backgroundColor: "#475569",
-                  color: "#fff",
-                  fontSize: "14px",
-                  border: "none"
-                }}
-              >
-                Batal
-              </button>
-              <button 
-                onClick={confirmChangeTelegramBot}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: "8px",
-                  backgroundColor: "#3b82f6",
-                  color: "#fff",
-                  fontSize: "14px",
-                  fontWeight: "bold",
-                  border: "none"
-                }}
-              >
-                Konfirmasi
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    
-      <Toast toasts={toasts} />
     </div>
   );
 }
