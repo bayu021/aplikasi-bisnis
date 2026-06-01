@@ -26,8 +26,235 @@ const CATEGORIES_OUT = ["Operasional", "Gaji", "Pembelian Stok", "Marketing", "L
 const PROJECT_STATUS = ["Pending", "Berjalan", "Selesai", "Ditunda"];
 const STATUS_COLOR = { Pending: "#f59e0b", Berjalan: "#3b82f6", Selesai: "#10b981", Ditunda: "#ef4444" };
 
+// ==================== SUPABASE CONFIG ====================
+// Ganti dengan URL & Key Supabase project Anda
+const SUPABASE_URL = localStorage.getItem("sb_url") || "";
+const SUPABASE_ANON_KEY = localStorage.getItem("sb_key") || "";
+
+// Supabase REST helper (tanpa library eksternal)
+const sbFetch = async (path, options = {}) => {
+  const url = SUPABASE_URL + "/rest/v1/" + path;
+  const headers = {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+    "Content-Type": "application/json",
+    "Prefer": options.prefer || "return=representation",
+    ...options.headers,
+  };
+  try {
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      const err = await res.text();
+      return { data: null, error: err };
+    }
+    const text = await res.text();
+    return { data: text ? JSON.parse(text) : [], error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+};
+
+// ==================== KEY → TABLE MAPPING ====================
+// Setiap localStorage key dipetakan ke tabel Supabase yang sesuai
+const KEY_TABLE_MAP = {
+  "biz":               { table: "biz_profile",       mode: "single" },   // object tunggal
+  "income":            { table: "cashflow",           mode: "array",  extraCol: { type: "income" } },
+  "expense":           { table: "cashflow",           mode: "array",  extraCol: { type: "expense" } },
+  "inventory":         { table: "inventory",          mode: "array" },
+  "invoices":          { table: "invoices",           mode: "array" },
+  "users":             { table: "users",              mode: "array" },
+  "owner_accounts":    { table: "owner_accounts",     mode: "array" },
+  "owner_cooldowns":   { table: "owner_cooldowns",    mode: "single" },
+  "owner_account":     { table: "owner_account",      mode: "single" },
+  "telegram":          { table: "telegram_config",    mode: "single" },
+  "work_hours":        { table: "work_hours",         mode: "single" },
+  "integrations_web":  { table: "integrations_web",  mode: "array" },
+  "payment_gateways":  { table: "payment_gateways",  mode: "array" },
+  "security_state":    { table: "security_state",     mode: "single" },
+  "session_user":      { table: null, mode: "local" }, // tetap di localStorage (session)
+  "owner_cooldowns":   { table: "owner_cooldowns",    mode: "single" },
+};
+
+// Cek apakah Supabase sudah dikonfigurasi
+const isSupabaseReady = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+// ==================== LOAD: Supabase → State ====================
+// Ambil data dari Supabase berdasarkan key. Fallback ke localStorage jika belum terkonfigurasi.
+const loadFromCloud = async (key, defaultVal) => {
+  // Selalu baca dari localStorage sebagai cache lokal
+  const localVal = (() => { try { return JSON.parse(localStorage.getItem(key)) ?? defaultVal; } catch { return defaultVal; } })();
+
+  if (!isSupabaseReady()) return localVal;
+
+  const mapping = KEY_TABLE_MAP[key];
+  if (!mapping || mapping.mode === "local") return localVal;
+
+  const { table, mode, extraCol } = mapping;
+
+  if (mode === "single") {
+    // Tabel single-row — pakai kolom 'key' sebagai identifier
+    const { data, error } = await sbFetch(`${table}?key=eq.${key}&limit=1`);
+    if (error || !data || data.length === 0) return localVal;
+    const row = data[0];
+    const parsed = row.value ? (typeof row.value === "string" ? JSON.parse(row.value) : row.value) : defaultVal;
+    localStorage.setItem(key, JSON.stringify(parsed)); // update cache
+    return parsed;
+  }
+
+  if (mode === "array") {
+    let query = table + "?order=id.desc";
+    if (extraCol) {
+      const [col, val] = Object.entries(extraCol)[0];
+      query += `&${col}=eq.${val}`;
+    }
+    const { data, error } = await sbFetch(query);
+    if (error || !data) return localVal;
+    localStorage.setItem(key, JSON.stringify(data)); // update cache
+    return data;
+  }
+
+  return localVal;
+};
+
+// ==================== SAVE: State → localStorage + Supabase ====================
+const saveAndSync = async (key, value) => {
+  // 1) Sempre salva no localStorage (cache local imediato)
+  localStorage.setItem(key, JSON.stringify(value));
+
+  if (!isSupabaseReady()) return;
+
+  const mapping = KEY_TABLE_MAP[key];
+  if (!mapping || mapping.mode === "local") return;
+
+  const { table, mode, extraCol } = mapping;
+
+  if (mode === "single") {
+    // Upsert single-row: kolom 'key' sebagai identifier unik
+    await sbFetch(table + "?key=eq." + key, {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      headers: { "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ key, value: JSON.stringify(value), updated_at: new Date().toISOString() }),
+    });
+    return;
+  }
+
+  if (mode === "array") {
+    if (!Array.isArray(value) || value.length === 0) return;
+
+    // Hapus rows lama yang tidak ada di value baru (hard delete by id)
+    const ids = value.map(r => r.id).filter(Boolean);
+
+    // Upsert semua data array sekaligus
+    const rows = value.map(r => ({
+      ...r,
+      ...(extraCol || {}),
+      updated_at: new Date().toISOString(),
+    }));
+
+    await sbFetch(table, {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      headers: { "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(rows),
+    });
+    return;
+  }
+};
+
+// Alias backward-compat — save sekarang juga sync ke Supabase
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
-const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const save = (k, v) => { localStorage.setItem(k, JSON.stringify(v)); saveAndSync(k, v); };
+
+// ==================== SUPABASE SETUP PAGE ====================
+function SupabaseSetup({ onSave }) {
+  const [url, setUrl] = useState(localStorage.getItem("sb_url") || "");
+  const [key, setKey] = useState(localStorage.getItem("sb_key") || "");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const testConnection = async () => {
+    if (!url || !key) return setTestResult({ ok: false, msg: "URL dan Key wajib diisi!" });
+    setTesting(true); setTestResult(null);
+    try {
+      const res = await fetch(url + "/rest/v1/biz_profile?limit=1", {
+        headers: { "apikey": key, "Authorization": "Bearer " + key },
+      });
+      if (res.ok) {
+        setTestResult({ ok: true, msg: "Koneksi Supabase berhasil! ✅" });
+      } else {
+        const t = await res.text();
+        setTestResult({ ok: false, msg: "Gagal: " + t.slice(0, 120) });
+      }
+    } catch (e) {
+      setTestResult({ ok: false, msg: "Error: " + e.message });
+    }
+    setTesting(false);
+  };
+
+  const handleSave = () => {
+    if (!url || !key) return;
+    localStorage.setItem("sb_url", url.replace(/\/$/, ""));
+    localStorage.setItem("sb_key", key.trim());
+    onSave();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0a0f1e", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99999, padding: 20, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ background: "#1e293b", borderRadius: 20, padding: 36, maxWidth: 500, width: "100%", border: "1px solid #334155", boxShadow: "0 30px 80px rgba(0,0,0,0.5)" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 52, marginBottom: 12 }}>☁️</div>
+          <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800, marginBottom: 6 }}>Konfigurasi Supabase</div>
+          <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
+            Masukkan URL dan Anon Key dari project Supabase Anda.<br />
+            Data akan tersinkronisasi otomatis ke cloud.
+          </div>
+        </div>
+
+        <div style={{ background: "#0f172a", borderRadius: 12, padding: "14px 16px", marginBottom: 24, fontSize: 13, color: "#94a3b8", lineHeight: 1.8 }}>
+          <strong style={{ color: "#3b82f6" }}>📋 Cara mendapatkan credentials:</strong><br />
+          1. Buka <strong style={{ color: "#f1f5f9" }}>supabase.com</strong> → Project Anda<br />
+          2. Settings → API<br />
+          3. Salin <strong style={{ color: "#10b981" }}>Project URL</strong> dan <strong style={{ color: "#10b981" }}>anon / public key</strong>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>SUPABASE PROJECT URL</label>
+          <input style={{ width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" }}
+            value={url} onChange={e => setUrl(e.target.value)} placeholder="https://xxxxxxxxxxxx.supabase.co" />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>ANON / PUBLIC KEY</label>
+          <input type="password" style={{ width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" }}
+            value={key} onChange={e => setKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6Ikp..." />
+        </div>
+
+        {testResult && (
+          <div style={{ background: testResult.ok ? "#10b98122" : "#ef444422", border: `1px solid ${testResult.ok ? "#10b98144" : "#ef444444"}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: testResult.ok ? "#10b981" : "#fca5a5", fontSize: 13 }}>
+            {testResult.msg}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none", cursor: "pointer", background: "#334155", color: "#94a3b8", fontWeight: 600, fontSize: 14, opacity: testing ? 0.6 : 1 }}
+            onClick={testConnection} disabled={testing}>
+            {testing ? "⏳ Testing..." : "🔌 Test Koneksi"}
+          </button>
+          <button style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none", cursor: "pointer", background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", color: "#fff", fontWeight: 700, fontSize: 14 }}
+            onClick={handleSave} disabled={!url || !key}>
+            💾 Simpan & Lanjutkan
+          </button>
+        </div>
+        {(localStorage.getItem("sb_url")) && (
+          <button style={{ width: "100%", marginTop: 12, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", background: "none", color: "#64748b", fontSize: 13 }}
+            onClick={onSave}>
+            Lewati (gunakan konfigurasi lama)
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ==================== LOADING SCREEN ====================
 function LoadingScreen({ onDone }) {
@@ -365,7 +592,7 @@ function CashFlow({ income, setIncome, expense, setExpense, inventory, setInvent
     if (tab === "in") {
       const updated = [rec, ...income]; setIncome(updated); save("income", updated);
       const msg = `📢 <b>Pemasukan Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💰 ${formatRp(form.amount)}\n📅 ${form.date}`;
-      const res = await sendTelegram(tg.token, tg.chatId, msg);
+      const res = await sendTelegram(tg.token, tg.groupId, msg);
       if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
     } else {
       const updated = [rec, ...expense]; setExpense(updated); save("expense", updated);
@@ -385,11 +612,11 @@ function CashFlow({ income, setIncome, expense, setExpense, inventory, setInvent
         addToast(`Stok ${item?.name} bertambah ${qty} unit!`, "success");
 
         const msg = `📢 <b>Pembelian Stok</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${item?.name || "-"}\n🔢 Qty: +${qty}\n💸 ${formatRp(finalAmount)}\n📅 ${form.date}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        const res = await sendTelegram(tg.token, tg.groupId, msg);
         if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
       } else {
         const msg = `📢 <b>Pengeluaran Baru</b>\n🏢 ${biz.name || "Bisnis"}\n📝 ${form.desc || "-"}\n📂 ${form.category}\n💸 ${formatRp(form.amount)}\n📅 ${form.date}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        const res = await sendTelegram(tg.token, tg.groupId, msg);
         if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
       }
     }
@@ -619,7 +846,7 @@ function Kasir({ income, setIncome, inventory, setInventory, tg, biz, addToast, 
     // Telegram
     const itemLines = cart.map(c => `  • ${c.qty}x ${c.name} @ ${formatRp(c.sellPrice)} = ${formatRp(c.sellPrice * c.qty)}`).join("\n");
     const msg = `🛒 <b>Penjualan Kasir</b>\n🏢 ${biz.name || "Bisnis"}\n${customerName ? "👤 " + customerName + "\n" : ""}${itemLines}\n━━━━━━━━━━\n💰 Total: ${formatRp(subtotal)}\n💳 ${paymentMethod}\n💹 Laba Bersih: ${formatRp(netProfit)}\n📅 ${txDate}`;
-    const res = await sendTelegram(tg.token, tg.chatId, msg);
+    const res = await sendTelegram(tg.token, tg.groupId, msg);
     if (res && !res.ok) addToast("Telegram gagal: " + (res.description || res.error || "error"), "error");
 
     setLastTx({ ...saleRecord, subtotal, netProfit });
@@ -862,7 +1089,7 @@ function Inventory({ inventory, setInventory, income, setIncome, expense, setExp
 
         // Telegram notif
         const msg = `🛒 <b>Penjualan Stok</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${txItem.name} x${qty}\n💰 Harga Jual: ${formatRp(totalSell)}\n📉 Modal: ${formatRp(totalCost)}\n💹 Laba: ${formatRp(grossProfit)}\n📅 ${today()}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        const res = await sendTelegram(tg.token, tg.groupId, msg);
         if (res && !res.ok) addToast("Telegram: " + (res.description || res.error), "error");
       } else {
         addToast("Harga jual belum diset, penjualan tidak dicatat otomatis", "error");
@@ -872,7 +1099,7 @@ function Inventory({ inventory, setInventory, income, setIncome, expense, setExp
     // Stok menipis?
     if (Number(item.qty) <= Number(item.minQty || 5)) {
       const msg = `⚠️ <b>Stok Menipis!</b>\n🏢 ${biz.name || "Bisnis"}\n📦 ${item.name}\n📉 Sisa Stok: ${item.qty}\n🔴 Minimum: ${item.minQty || 5}`;
-      await sendTelegram(tg.token, tg.chatId, msg);
+      await sendTelegram(tg.token, tg.groupId, msg);
       addToast(`⚠️ Stok ${item.name} menipis (${item.qty})`, "error");
     }
 
@@ -903,7 +1130,7 @@ function Inventory({ inventory, setInventory, income, setIncome, expense, setExp
 💸 Modal/unit: ${formatRp(costPrice)}
 💰 Total: ${formatRp(totalCost)}
 📅 ${today()}`;
-        const res = await sendTelegram(tg.token, tg.chatId, msg);
+        const res = await sendTelegram(tg.token, tg.groupId, msg);
         if (res && !res.ok) addToast("Telegram: " + (res.description || res.error), "error");
       } else {
         addToast("Stok berhasil ditambahkan! (Harga modal belum diset, pengeluaran tidak dicatat)", "success");
@@ -1248,35 +1475,60 @@ function Reports({ income, expense, inventory }) {
 
 // ==================== TELEGRAM SETTINGS ====================
 function TelegramSettings({ tg, setTg, addToast }) {
-  const [form, setForm] = useState(tg);
-  const [testing, setTesting] = useState(false);
-  const [lastResult, setLastResult] = useState(null);
+  const [form, setForm] = useState({
+    token: tg.token || "",
+    privateId: tg.privateId || tg.chatId || "",  // ID pribadi owner (keamanan)
+    groupId: tg.groupId || "",                    // ID grup (transaksi)
+  });
+  const [testingPrivate, setTestingPrivate] = useState(false);
+  const [testingGroup, setTestingGroup] = useState(false);
+  const [resultPrivate, setResultPrivate] = useState(null);
+  const [resultGroup, setResultGroup] = useState(null);
   const [pendingBotChange, setPendingBotChange] = useState(false);
   const [botOtpInput, setBotOtpInput] = useState("");
   const [pendingBotOtp, setPendingBotOtp] = useState(null);
 
-  const test = async () => {
-    if (!form.token || !form.chatId) return addToast("Isi Bot Token dan Chat ID terlebih dahulu!", "error");
-    setTesting(true); setLastResult(null);
-    const res = await sendTelegram(form.token, form.chatId, `✅ <b>Test BizFlow Pro</b>\n\nIntegrasi Telegram berhasil!\n🤖 Bot aktif dan siap menerima notifikasi.\n📅 ${new Date().toLocaleString("id-ID")}`);
-    setTesting(false);
-    setLastResult(res);
-    if (res && res.ok) {
-      addToast("✅ Pesan test berhasil terkirim ke Telegram!", "success");
-    } else {
-      const errMsg = res?.description || res?.error || "Tidak diketahui";
-      addToast("❌ Gagal: " + errMsg, "error");
-    }
+  // Test kirim ke ID Pribadi Owner
+  const testPrivate = async () => {
+    if (!form.token || !form.privateId) return addToast("Bot Token dan ID Pribadi wajib diisi!", "error");
+    setTestingPrivate(true); setResultPrivate(null);
+    const res = await sendTelegram(
+      form.token, form.privateId,
+      `🔐 <b>Test — Chat Pribadi Owner</b>\n\n` +
+      `✅ Koneksi ke ID Pribadi berhasil!\n` +
+      `👤 Notifikasi keamanan akan dikirim ke sini.\n` +
+      `📅 ${new Date().toLocaleString("id-ID")}`
+    );
+    setTestingPrivate(false);
+    setResultPrivate(res);
+    if (res?.ok) addToast("✅ Pesan test ke ID Pribadi berhasil!", "success");
+    else addToast("❌ Gagal kirim ke ID Pribadi: " + (res?.description || res?.error || "Error"), "error");
+  };
+
+  // Test kirim ke Grup
+  const testGroup = async () => {
+    if (!form.token || !form.groupId) return addToast("Bot Token dan ID Grup wajib diisi!", "error");
+    setTestingGroup(true); setResultGroup(null);
+    const res = await sendTelegram(
+      form.token, form.groupId,
+      `💬 <b>Test — Grup Transaksi</b>\n\n` +
+      `✅ Koneksi ke Grup berhasil!\n` +
+      `📊 Semua notifikasi transaksi (pemasukan & pengeluaran) akan dikirim ke sini.\n` +
+      `📅 ${new Date().toLocaleString("id-ID")}`
+    );
+    setTestingGroup(false);
+    setResultGroup(res);
+    if (res?.ok) addToast("✅ Pesan test ke Grup berhasil!", "success");
+    else addToast("❌ Gagal kirim ke Grup: " + (res?.description || res?.error || "Error"), "error");
   };
 
   const saveTg = async () => {
-    // Jika token berubah, wajib verifikasi OTP ke bot LAMA dulu
     const oldToken = tg.token;
-    const oldChatId = tg.chatId;
-    const tokenChanged = form.token !== oldToken || form.chatId !== oldChatId;
+    const oldPrivateId = tg.privateId || tg.chatId;
+    const tokenChanged = form.token !== oldToken;
 
-    if (tokenChanged && oldToken && oldChatId) {
-      // Kirim OTP ke bot LAMA
+    // Jika token berubah, wajib verifikasi OTP ke ID pribadi LAMA
+    if (tokenChanged && oldToken && oldPrivateId) {
       const otp = generateOTP();
       setPendingBotOtp(otp);
       setPendingBotChange(true);
@@ -1284,25 +1536,39 @@ function TelegramSettings({ tg, setTg, addToast }) {
         `Ada percobaan mengganti konfigurasi bot BizFlow Pro!\n` +
         `🕐 Waktu: ${new Date().toLocaleString("id-ID")}\n\n` +
         `Jika Anda yang melakukan ini, masukkan kode berikut di aplikasi:\n\n<code>${otp}</code>\n\nAbaikan jika bukan Anda!`;
-      const res = await sendTelegram(oldToken, oldChatId, msg);
-      if (res && res.ok) {
-        addToast("⚠️ Kode verifikasi dikirim ke bot LAMA Telegram. Masukkan kode untuk konfirmasi.", "info");
-      } else {
-        addToast("⚠️ Tidak bisa menghubungi bot lama. Pastikan token/chatId lama valid.", "error");
-      }
+      const res = await sendTelegram(oldToken, oldPrivateId, msg);
+      if (res?.ok) addToast("⚠️ Kode verifikasi dikirim ke ID Pribadi lama. Masukkan untuk konfirmasi.", "info");
+      else addToast("⚠️ Tidak bisa menghubungi bot lama. Cek konfigurasi.", "error");
       return;
     }
-    setTg(form); save("telegram", form); addToast("Pengaturan Telegram disimpan!", "success");
+
+    // Simpan dengan field baru + backward-compat chatId = privateId
+    const updated = { ...form, chatId: form.privateId };
+    setTg(updated);
+    save("telegram", updated);
+    addToast("✅ Pengaturan Telegram disimpan!", "success");
   };
 
   const confirmBotChange = () => {
     if (botOtpInput.trim().toUpperCase() === pendingBotOtp) {
-      setTg(form); save("telegram", form);
+      const updated = { ...form, chatId: form.privateId };
+      setTg(updated); save("telegram", updated);
       setPendingBotChange(false); setBotOtpInput(""); setPendingBotOtp(null);
       addToast("✅ Bot Telegram berhasil diperbarui!", "success");
     } else {
-      addToast("❌ Kode OTP salah! Perubahan bot dibatalkan.", "error");
+      addToast("❌ Kode OTP salah!", "error");
     }
+  };
+
+  const ResultBadge = ({ result }) => {
+    if (!result) return null;
+    return (
+      <div style={{ background: result.ok ? "#10b98122" : "#ef444422", border: `1px solid ${result.ok ? "#10b98144" : "#ef444444"}`, borderRadius: 8, padding: "9px 13px", marginTop: 10, fontSize: 13 }}>
+        {result.ok
+          ? <span style={{ color: "#10b981" }}>✅ Berhasil! Terkirim ke ID: {result.result?.chat?.id}</span>
+          : <span style={{ color: "#ef4444" }}>❌ {result.description || result.error}<br /><span style={{ color: "#94a3b8", fontSize: 12 }}>Pastikan bot sudah di-start dan ID valid.</span></span>}
+      </div>
+    );
   };
 
   return (
@@ -1317,20 +1583,16 @@ function TelegramSettings({ tg, setTg, addToast }) {
               <div style={{ fontSize: 48, marginBottom: 10 }}>🤖</div>
               <div style={{ color: "#f59e0b", fontSize: 20, fontWeight: 800 }}>Verifikasi Ganti Bot</div>
               <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 8, lineHeight: 1.6 }}>
-                Kode OTP dikirim ke <strong style={{ color: "#3b82f6" }}>bot Telegram LAMA</strong>.<br />
+                Kode OTP dikirim ke <strong style={{ color: "#3b82f6" }}>ID Pribadi Owner lama</strong>.<br />
                 Masukkan kode tersebut untuk konfirmasi perubahan.
               </div>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>KODE OTP (dari chat bot lama)</label>
-              <input
-                style={{ ...inputStyle, fontFamily: "monospace", fontSize: 18, letterSpacing: 6, textAlign: "center", textTransform: "uppercase" }}
-                placeholder="XXXXXX"
-                value={botOtpInput}
+              <label style={labelStyle}>KODE OTP (dari chat pribadi)</label>
+              <input style={{ ...inputStyle, fontFamily: "monospace", fontSize: 18, letterSpacing: 6, textAlign: "center", textTransform: "uppercase" }}
+                placeholder="XXXXXX" value={botOtpInput}
                 onChange={e => setBotOtpInput(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === "Enter" && confirmBotChange()}
-                maxLength={8}
-              />
+                onKeyDown={e => e.key === "Enter" && confirmBotChange()} maxLength={8} />
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...btnPrimary, background: "#334155", flex: 1 }} onClick={() => { setPendingBotChange(false); setBotOtpInput(""); setPendingBotOtp(null); }}>Batal</button>
@@ -1340,55 +1602,130 @@ function TelegramSettings({ tg, setTg, addToast }) {
         </div>
       )}
 
-      <div style={{ maxWidth: 580 }}>
-        <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155", marginBottom: 20 }}>
-          <div style={{ background: "#0f172a", borderRadius: 10, padding: 16, marginBottom: 20, color: "#94a3b8", fontSize: 13, lineHeight: 1.8 }}>
+      <div style={{ maxWidth: 620 }}>
+
+        {/* ── Cara Setup ── */}
+        <div style={{ background: "#1e293b", borderRadius: 14, padding: 22, border: "1px solid #334155", marginBottom: 20 }}>
+          <div style={{ background: "#0f172a", borderRadius: 10, padding: "14px 16px", marginBottom: 0, color: "#94a3b8", fontSize: 13, lineHeight: 1.9 }}>
             <strong style={{ color: "#3b82f6" }}>📋 Cara Setup Bot Telegram:</strong><br />
-            1. Buka Telegram → cari <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>@BotFather</code><br />
-            2. Ketik <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>/newbot</code> → ikuti instruksi → salin <strong style={{ color: "#f1f5f9" }}>Bot Token</strong><br />
-            3. Untuk Chat ID pribadi: cari <code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>@userinfobot</code> → klik Start<br />
-            4. Untuk grup: tambahkan bot ke grup → kirim pesan → cek<br /><code style={{ background: "#1e293b", padding: "1px 5px", borderRadius: 4 }}>https://api.telegram.org/bot[TOKEN]/getUpdates</code><br />
-            5. Masukkan token & chat ID → Simpan → Test
-          </div>
-
-          <Field label="BOT TOKEN">
-            <input style={inputStyle} value={form.token || ""} onChange={e => setForm({ ...form, token: e.target.value })} placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ" />
-          </Field>
-          <Field label="CHAT ID (angka, contoh: 123456789 atau -100xxxx untuk grup)">
-            <input style={inputStyle} value={form.chatId || ""} onChange={e => setForm({ ...form, chatId: e.target.value })} placeholder="123456789" />
-          </Field>
-
-          {lastResult && (
-            <div style={{ background: lastResult.ok ? "#10b98122" : "#ef444422", border: `1px solid ${lastResult.ok ? "#10b981" : "#ef4444"}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
-              {lastResult.ok
-                ? <span style={{ color: "#10b981" }}>✅ Berhasil! Pesan terkirim ke chat ID: {lastResult.result?.chat?.id}</span>
-                : <span style={{ color: "#ef4444" }}>❌ Gagal: {lastResult.description || lastResult.error}<br /><span style={{ color: "#94a3b8", fontSize: 12 }}>Pastikan token benar, bot sudah di-start, dan chat ID valid.</span></span>
-              }
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button style={btnPrimary} onClick={saveTg}>💾 Simpan</button>
-            <button style={{ ...btnPrimary, background: "linear-gradient(135deg,#0088cc,#0066aa)", opacity: testing ? 0.7 : 1 }} onClick={test} disabled={testing}>
-              {testing ? "⏳ Mengirim..." : "📨 Kirim Test"}
-            </button>
+            <strong style={{ color: "#f59e0b" }}>1.</strong> Buka Telegram → cari <code style={{ background: "#1e293b", padding: "1px 6px", borderRadius: 4 }}>@BotFather</code> → <code style={{ background: "#1e293b", padding: "1px 6px", borderRadius: 4 }}>/newbot</code> → salin <strong style={{ color: "#f1f5f9" }}>Bot Token</strong><br />
+            <strong style={{ color: "#f59e0b" }}>2.</strong> Untuk <strong style={{ color: "#ef4444" }}>ID Pribadi</strong>: cari <code style={{ background: "#1e293b", padding: "1px 6px", borderRadius: 4 }}>@userinfobot</code> → klik Start → salin angka ID Anda<br />
+            <strong style={{ color: "#f59e0b" }}>3.</strong> Untuk <strong style={{ color: "#3b82f6" }}>ID Grup</strong>: buat grup → tambahkan bot → kirim pesan di grup → buka<br />
+            <code style={{ background: "#1e293b", padding: "2px 6px", borderRadius: 4, fontSize: 12 }}>https://api.telegram.org/bot[TOKEN]/getUpdates</code> → cari <code style={{ background: "#1e293b", padding: "1px 6px", borderRadius: 4 }}>"chat":&#123;"id":-100...</code><br />
+            <strong style={{ color: "#f59e0b" }}>4.</strong> Isi ketiga kolom di bawah → Simpan → Test masing-masing
           </div>
         </div>
 
+        {/* ── Bot Token ── */}
+        <div style={{ background: "#1e293b", borderRadius: 14, padding: 22, border: "1px solid #334155", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "#3b82f622", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div>
+            <div>
+              <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>Bot Token</div>
+              <div style={{ color: "#64748b", fontSize: 12 }}>Token autentikasi bot dari @BotFather</div>
+            </div>
+          </div>
+          <Field label="BOT TOKEN">
+            <input style={inputStyle} value={form.token} onChange={e => setForm({ ...form, token: e.target.value })} placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ" />
+          </Field>
+        </div>
+
+        {/* ── ID Pribadi Owner ── */}
+        <div style={{ background: "#1e293b", borderRadius: 14, padding: 22, border: "2px solid #ef444433", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "#ef444422", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>
+            <div>
+              <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>ID Pribadi Owner</div>
+              <div style={{ color: "#64748b", fontSize: 12 }}>Hanya untuk notifikasi keamanan & OTP — chat langsung ke Owner</div>
+            </div>
+            <span style={{ marginLeft: "auto", background: "#ef444422", color: "#ef4444", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, border: "1px solid #ef444444" }}>🔐 KEAMANAN</span>
+          </div>
+
+          <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
+            Pesan yang dikirim ke sini: <strong style={{ color: "#f1f5f9" }}>Peringatan perubahan rekening · Kode OTP bypass · Alert keamanan</strong>
+          </div>
+
+          <Field label="ID PRIBADI OWNER (angka, contoh: 123456789)">
+            <input style={{ ...inputStyle, borderColor: "#ef444444" }} value={form.privateId}
+              onChange={e => setForm({ ...form, privateId: e.target.value })} placeholder="123456789" />
+          </Field>
+          <button style={{ ...btnPrimary, background: "linear-gradient(135deg,#ef4444,#b91c1c)", opacity: testingPrivate ? 0.7 : 1, fontSize: 13, padding: "9px 18px" }}
+            onClick={testPrivate} disabled={testingPrivate}>
+            {testingPrivate ? "⏳ Mengirim..." : "📨 Test Kirim ke ID Pribadi"}
+          </button>
+          <ResultBadge result={resultPrivate} />
+        </div>
+
+        {/* ── ID Grup ── */}
+        <div style={{ background: "#1e293b", borderRadius: 14, padding: 22, border: "2px solid #3b82f633", marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "#3b82f622", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>💬</div>
+            <div>
+              <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>ID Group</div>
+              <div style={{ color: "#64748b", fontSize: 12 }}>Untuk semua notifikasi transaksi arus masuk & keluar</div>
+            </div>
+            <span style={{ marginLeft: "auto", background: "#3b82f622", color: "#3b82f6", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, border: "1px solid #3b82f644" }}>📊 TRANSAKSI</span>
+          </div>
+
+          <div style={{ background: "#0f172a", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#94a3b8", lineHeight: 1.7 }}>
+            Pesan yang dikirim ke sini: <strong style={{ color: "#f1f5f9" }}>Pemasukan baru · Pengeluaran baru · Penjualan kasir · Transaksi stok</strong>
+          </div>
+
+          <Field label="ID GROUP (angka negatif, contoh: -1001234567890)">
+            <input style={{ ...inputStyle, borderColor: "#3b82f644" }} value={form.groupId}
+              onChange={e => setForm({ ...form, groupId: e.target.value })} placeholder="-1001234567890" />
+          </Field>
+          <button style={{ ...btnPrimary, background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", opacity: testingGroup ? 0.7 : 1, fontSize: 13, padding: "9px 18px" }}
+            onClick={testGroup} disabled={testingGroup}>
+            {testingGroup ? "⏳ Mengirim..." : "📨 Test Kirim ke Grup"}
+          </button>
+          <ResultBadge result={resultGroup} />
+        </div>
+
+        {/* ── Simpan ── */}
+        <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155", marginBottom: 20 }}>
+          <button style={{ ...btnPrimary, width: "100%", padding: "13px", fontSize: 15 }} onClick={saveTg}>
+            💾 Simpan Semua Pengaturan Telegram
+          </button>
+          {/* Status summary */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 14 }}>
+            {[
+              { label: "Bot Token", ok: !!form.token, icon: "🤖" },
+              { label: "ID Pribadi", ok: !!form.privateId, icon: "👤" },
+              { label: "ID Group", ok: !!form.groupId, icon: "💬" },
+            ].map(s => (
+              <div key={s.label} style={{ background: "#0f172a", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: s.ok ? "#10b981" : "#ef4444" }}>{s.ok ? "✓ Terisi" : "✕ Kosong"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Routing Notifikasi ── */}
         <div style={{ background: "#1e293b", borderRadius: 14, padding: 20, border: "1px solid #334155" }}>
-          <h4 style={{ color: "#f1f5f9", margin: "0 0 12px" }}>🔔 Notifikasi Otomatis</h4>
+          <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>🔔 Routing Notifikasi Otomatis</h4>
           {[
-            { icon: "💰", label: "Pemasukan baru ditambahkan" },
-            { icon: "💸", label: "Pengeluaran baru ditambahkan" },
-            { icon: "🛒", label: "Penjualan stok (dengan detail laba)" },
-            { icon: "🛒", label: "Transaksi kasir (dengan detail laba)" },
-            { icon: "⚠️", label: "Stok barang di bawah minimum" },
+            { icon: "🔐", label: "Peringatan perubahan rekening",     dest: "ID Pribadi", destColor: "#ef4444" },
+            { icon: "🔑", label: "Kode OTP bypass keamanan",          dest: "ID Pribadi", destColor: "#ef4444" },
+            { icon: "🚨", label: "Alert keamanan sistem",             dest: "ID Pribadi", destColor: "#ef4444" },
+            { icon: "💰", label: "Pemasukan baru ditambahkan",        dest: "ID Group",   destColor: "#3b82f6" },
+            { icon: "💸", label: "Pengeluaran baru ditambahkan",      dest: "ID Group",   destColor: "#3b82f6" },
+            { icon: "🛒", label: "Transaksi kasir (detail laba)",     dest: "ID Group",   destColor: "#3b82f6" },
+            { icon: "📦", label: "Penjualan stok (detail laba)",      dest: "ID Group",   destColor: "#3b82f6" },
+            { icon: "⚠️", label: "Stok barang di bawah minimum",     dest: "ID Group",   destColor: "#3b82f6" },
           ].map(n => (
-            <div key={n.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #0f172a", color: "#94a3b8", fontSize: 14 }}>
-              <span>{n.icon}</span> {n.label} <span style={{ marginLeft: "auto", color: "#10b981", fontSize: 12 }}>Aktif ✓</span>
+            <div key={n.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #0f172a" }}>
+              <span style={{ fontSize: 16 }}>{n.icon}</span>
+              <span style={{ color: "#94a3b8", fontSize: 13, flex: 1 }}>{n.label}</span>
+              <span style={{ background: n.destColor + "22", color: n.destColor, fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>
+                → {n.dest}
+              </span>
             </div>
           ))}
         </div>
+
       </div>
     </div>
   );
@@ -1619,6 +1956,340 @@ function SecurityLockBanner({ onUnlock }) {
   );
 }
 
+// ==================== CLOUD SYNC PANEL ====================
+function CloudSyncPanel({ addToast }) {
+  const [url, setUrl] = useState(localStorage.getItem("sb_url") || "");
+  const [key, setKey] = useState(localStorage.getItem("sb_key") || "");
+  const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(localStorage.getItem("last_sync") || null);
+
+  const TABLE_LIST = [
+    { key: "biz",              label: "Profil Bisnis",       icon: "🏢", table: "biz_profile" },
+    { key: "income",           label: "Pemasukan",           icon: "📈", table: "cashflow (type=income)" },
+    { key: "expense",          label: "Pengeluaran",         icon: "📉", table: "cashflow (type=expense)" },
+    { key: "inventory",        label: "Stok Gudang",         icon: "📦", table: "inventory" },
+    { key: "invoices",         label: "Invoice",             icon: "🧾", table: "invoices" },
+    { key: "users",            label: "Data Karyawan",       icon: "👥", table: "users" },
+    { key: "owner_accounts",   label: "Rekening Owner",      icon: "🏦", table: "owner_accounts" },
+    { key: "owner_account",    label: "Akun Owner",          icon: "🔑", table: "owner_account" },
+    { key: "telegram",         label: "Konfigurasi Telegram",icon: "✈️", table: "telegram_config" },
+    { key: "work_hours",       label: "Jam Kerja",           icon: "🕐", table: "work_hours" },
+    { key: "integrations_web", label: "Integrasi Website",   icon: "🌐", table: "integrations_web" },
+    { key: "payment_gateways", label: "Payment Gateway",     icon: "💳", table: "payment_gateways" },
+    { key: "security_state",   label: "Status Keamanan",     icon: "🔒", table: "security_state" },
+  ];
+
+  const testConnection = async () => {
+    if (!url || !key) return setTestResult({ ok: false, msg: "URL dan Key wajib diisi!" });
+    setTesting(true); setTestResult(null);
+    try {
+      const res = await fetch(url.replace(/\/$/, "") + "/rest/v1/biz_profile?limit=1", {
+        headers: { "apikey": key, "Authorization": "Bearer " + key },
+      });
+      if (res.ok || res.status === 406) {
+        setTestResult({ ok: true, msg: "✅ Koneksi Supabase berhasil!" });
+      } else {
+        const t = await res.text();
+        setTestResult({ ok: false, msg: "❌ " + (t.slice(0, 150) || "Koneksi gagal") });
+      }
+    } catch (e) {
+      setTestResult({ ok: false, msg: "❌ Error: " + e.message });
+    }
+    setTesting(false);
+  };
+
+  const handleSaveConfig = () => {
+    if (!url || !key) return addToast("URL dan Key wajib diisi!", "error");
+    localStorage.setItem("sb_url", url.replace(/\/$/, ""));
+    localStorage.setItem("sb_key", key.trim());
+    addToast("✅ Konfigurasi Supabase disimpan! Reload halaman untuk mulai sync.", "success");
+  };
+
+  const handleFullSync = async () => {
+    if (!isSupabaseReady()) return addToast("Konfigurasi Supabase belum diisi!", "error");
+    setSyncing(true);
+    const keys = ["biz", "income", "expense", "inventory", "invoices", "users", "owner_accounts", "owner_account", "telegram", "work_hours", "integrations_web", "payment_gateways"];
+    let ok = 0, fail = 0;
+    for (const k of keys) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        await saveAndSync(k, parsed);
+        ok++;
+      } catch { fail++; }
+    }
+    const now = new Date().toLocaleString("id-ID");
+    localStorage.setItem("last_sync", now);
+    setLastSync(now);
+    setSyncing(false);
+    addToast(`☁️ Sync selesai! ${ok} berhasil${fail > 0 ? `, ${fail} gagal` : ""}`, ok > 0 ? "success" : "error");
+  };
+
+  const handleClearConfig = () => {
+    localStorage.removeItem("sb_url");
+    localStorage.removeItem("sb_key");
+    setUrl(""); setKey("");
+    addToast("Konfigurasi Supabase dihapus. App beralih ke mode lokal.", "info");
+  };
+
+  const inputS = { width: "100%", padding: "10px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, color: "#f1f5f9", fontSize: 14, outline: "none", boxSizing: "border-box" };
+  const btn = { background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", cursor: "pointer", fontSize: 14, fontWeight: 600 };
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      {/* Status banner */}
+      <div style={{ background: isSupabaseReady() ? "#10b98122" : "#f59e0b22", border: `1px solid ${isSupabaseReady() ? "#10b98144" : "#f59e0b44"}`, borderRadius: 14, padding: "18px 22px", marginBottom: 24, display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ fontSize: 40 }}>{isSupabaseReady() ? "☁️" : "⚠️"}</div>
+        <div>
+          <div style={{ color: isSupabaseReady() ? "#10b981" : "#f59e0b", fontWeight: 800, fontSize: 16, marginBottom: 4 }}>
+            {isSupabaseReady() ? "Supabase Terhubung" : "Belum Terhubung ke Cloud"}
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: 13 }}>
+            {isSupabaseReady()
+              ? `Endpoint: ${(localStorage.getItem("sb_url") || "").replace("https://", "").slice(0, 40)}...`
+              : "App berjalan di mode lokal (localStorage). Data tidak tersinkronisasi antar perangkat."}
+          </div>
+          {lastSync && <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>🕐 Terakhir sync: {lastSync}</div>}
+        </div>
+      </div>
+
+      {/* Konfigurasi */}
+      <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155", marginBottom: 20 }}>
+        <h4 style={{ color: "#f1f5f9", margin: "0 0 20px", fontSize: 16 }}>⚙️ Konfigurasi Supabase</h4>
+
+        <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "#94a3b8", lineHeight: 1.8 }}>
+          <strong style={{ color: "#3b82f6" }}>📋 Cara setup:</strong><br />
+          1. Buka <strong style={{ color: "#f1f5f9" }}>supabase.com</strong> → Project Anda → <strong>Settings → API</strong><br />
+          2. Salin <strong style={{ color: "#10b981" }}>Project URL</strong> dan <strong style={{ color: "#10b981" }}>anon/public key</strong><br />
+          3. Jalankan SQL schema di bawah di <strong>SQL Editor</strong> Supabase Anda
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>SUPABASE PROJECT URL</label>
+          <input style={inputS} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://xxxxxxxxxxxx.supabase.co" />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", color: "#94a3b8", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>ANON / PUBLIC KEY</label>
+          <div style={{ position: "relative" }}>
+            <input type={showKey ? "text" : "password"} style={{ ...inputS, paddingRight: 44 }} value={key} onChange={e => setKey(e.target.value)} placeholder="eyJhbGci..." />
+            <button onClick={() => setShowKey(s => !s)} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#64748b", cursor: "pointer" }}>{showKey ? "🙈" : "👁️"}</button>
+          </div>
+        </div>
+
+        {testResult && (
+          <div style={{ background: testResult.ok ? "#10b98122" : "#ef444422", border: `1px solid ${testResult.ok ? "#10b98144" : "#ef444444"}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: testResult.ok ? "#10b981" : "#fca5a5", fontSize: 13 }}>
+            {testResult.msg}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button style={{ ...btn, background: "#334155", opacity: testing ? 0.7 : 1 }} onClick={testConnection} disabled={testing}>
+            {testing ? "⏳ Testing..." : "🔌 Test Koneksi"}
+          </button>
+          <button style={btn} onClick={handleSaveConfig}>💾 Simpan Konfigurasi</button>
+          {isSupabaseReady() && (
+            <button style={{ ...btn, background: "linear-gradient(135deg,#10b981,#059669)", opacity: syncing ? 0.7 : 1 }} onClick={handleFullSync} disabled={syncing}>
+              {syncing ? "⏳ Syncing..." : "☁️ Sync Semua Data Sekarang"}
+            </button>
+          )}
+          {isSupabaseReady() && (
+            <button style={{ ...btn, background: "linear-gradient(135deg,#ef4444,#b91c1c)" }} onClick={handleClearConfig}>🗑️ Hapus Konfigurasi</button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabel Mapping */}
+      <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155", marginBottom: 20 }}>
+        <h4 style={{ color: "#f1f5f9", margin: "0 0 16px", fontSize: 15 }}>🗂️ Pemetaan Data → Tabel Supabase</h4>
+        <div style={{ background: "#0f172a", borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#1e293b" }}>
+                {["Data", "Tabel Supabase", "Mode"].map(h => <th key={h} style={{ padding: "10px 14px", color: "#64748b", fontSize: 11, fontWeight: 600, textAlign: "left" }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {TABLE_LIST.map((t, i) => (
+                <tr key={t.key} style={{ borderTop: i > 0 ? "1px solid #1e293b" : "none" }}>
+                  <td style={{ padding: "10px 14px", color: "#f1f5f9" }}>{t.icon} {t.label}</td>
+                  <td style={{ padding: "10px 14px" }}><code style={{ color: "#8b5cf6", fontSize: 12 }}>{t.table}</code></td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <span style={{ background: t.table.includes("array") || !["biz_profile","telegram_config","work_hours","owner_account","owner_cooldowns","security_state"].includes(t.table) ? "#3b82f622" : "#f59e0b22",
+                      color: ["biz_profile","telegram_config","work_hours","owner_account","owner_cooldowns","security_state"].includes(t.table) ? "#f59e0b" : "#3b82f6",
+                      fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20 }}>
+                      {["biz_profile","telegram_config","work_hours","owner_account","owner_cooldowns","security_state"].includes(t.table) ? "single row" : "array / upsert"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* SQL Schema */}
+      <div style={{ background: "#1e293b", borderRadius: 14, padding: 24, border: "1px solid #334155" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h4 style={{ color: "#f1f5f9", margin: 0, fontSize: 15 }}>📄 SQL Schema untuk Supabase</h4>
+          <button onClick={() => { navigator.clipboard?.writeText(SQL_SCHEMA); addToast("Schema SQL disalin!", "success"); }}
+            style={{ ...btn, fontSize: 12, padding: "6px 14px" }}>📋 Salin SQL</button>
+        </div>
+        <pre style={{ background: "#0f172a", borderRadius: 10, padding: 16, color: "#94a3b8", fontSize: 11, overflow: "auto", maxHeight: 300, margin: 0, lineHeight: 1.6 }}>
+          {SQL_SCHEMA}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+// SQL Schema lengkap untuk dijalankan di Supabase SQL Editor
+const SQL_SCHEMA = `-- ======================================
+-- BizFlow Pro — Supabase Schema
+-- Jalankan di: Supabase Dashboard > SQL Editor
+-- ======================================
+
+-- Tabel single-row config (key-value store)
+create table if not exists biz_profile (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists telegram_config (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists work_hours (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists owner_account (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists owner_cooldowns (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists security_state (
+  key text primary key,
+  value text,
+  updated_at timestamptz default now()
+);
+
+-- Tabel array (data bisnis utama)
+create table if not exists cashflow (
+  id bigint primary key,
+  type text not null,        -- 'income' | 'expense'
+  date text,
+  category text,
+  desc text,
+  amount numeric,
+  from_stock boolean default false,
+  cost_amount numeric,
+  gross_profit numeric,
+  payment_method text,
+  customer_name text,
+  items jsonb,
+  updated_at timestamptz default now()
+);
+
+create table if not exists inventory (
+  id bigint primary key,
+  name text,
+  sku text,
+  category text,
+  qty numeric default 0,
+  min_qty numeric default 5,
+  cost_price numeric,
+  sell_price numeric,
+  supplier text,
+  history jsonb,
+  updated_at timestamptz default now()
+);
+
+create table if not exists invoices (
+  id bigint primary key,
+  number text,
+  date text,
+  due_date text,
+  client text,
+  items jsonb,
+  total numeric,
+  status text,
+  notes text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists users (
+  id bigint primary key,
+  name text,
+  username text unique,
+  password text,
+  position text,
+  role text default 'karyawan',
+  active boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists owner_accounts (
+  id bigint primary key,
+  type text,
+  bank text,
+  account_name text,
+  account_number text,
+  notes text,
+  last_edited timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists integrations_web (
+  id bigint primary key,
+  name text,
+  url text,
+  api_key text,
+  webhook_url text,
+  sync_kasir boolean default true,
+  sync_stok boolean default true,
+  notes text,
+  status text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists payment_gateways (
+  id bigint primary key,
+  provider text,
+  merchant_id text,
+  server_key text,
+  client_key text,
+  webhook_url text,
+  active boolean default true,
+  notif_telegram boolean default true,
+  notes text,
+  total_tx integer default 0,
+  total_amount numeric default 0,
+  updated_at timestamptz default now()
+);
+
+-- Enable Row Level Security (RLS) — sesuaikan dengan kebutuhan auth Anda
+-- alter table cashflow enable row level security;
+-- (Untuk penggunaan dengan anon key, nonaktifkan RLS atau tambahkan policy)
+`;
+
 // ==================== SECURITY HELPER COMPONENTS ====================
 function ManualUnlockPanel({ onUnlock, addToast }) {
   const [otpInput, setOtpInput] = useState("");
@@ -1668,7 +2339,7 @@ function TestSecurityNotif({ tg, addToast }) {
       `📱 Jika ada perubahan rekening, OTP akan terkirim ke sini.\n\n` +
       `Contoh kode OTP bypass:\n<code>${otp}</code>\n\n` +
       `📅 ${new Date().toLocaleString("id-ID")}`;
-    const res = await sendTelegram(tg.token, tg.chatId, msg);
+    const res = await sendTelegram(tg.token, tg.privateId, msg);
     setSending(false);
     if (res && res.ok) addToast("✅ Test notifikasi keamanan berhasil dikirim!", "success");
     else addToast("❌ Gagal kirim: " + (res?.description || "Cek konfigurasi Telegram"), "error");
@@ -1754,7 +2425,7 @@ function OwnerPage({ addToast, tg, setTg, systemLocked, setSystemLocked }) {
         `<code>${otp}</code>\n\n` +
         `Masukkan kode ini di aplikasi untuk membuka kunci seketika jika Anda yang melakukan perubahan ini.`;
 
-      const res = await sendTelegram(tg.token, tg.chatId, secMsg);
+      const res = await sendTelegram(tg.token, tg.privateId, secMsg);
       if (res && res.ok) {
         addToast("⚠️ Rekening diubah! Sistem dikunci. Kode OTP dikirim ke Telegram Owner.", "error");
       } else {
@@ -1856,7 +2527,7 @@ function OwnerPage({ addToast, tg, setTg, systemLocked, setSystemLocked }) {
     <div>
       <h2 style={{ color: "#f1f5f9", margin: "0 0 20px", fontSize: 22 }}>👑 Owner</h2>
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-        {[["akun","🏦 Rekening & Akun"],["karyawan","👥 Karyawan"],["website","🌐 Integrasi Website"],["gateway","💳 Payment Gateway"],["jam","🕐 Jam Kerja Telegram"],["keamanan","🔐 Keamanan"],["owner","🔑 Akun Owner"]].map(([id,label]) => (
+        {[["akun","🏦 Rekening & Akun"],["karyawan","👥 Karyawan"],["website","🌐 Integrasi Website"],["gateway","💳 Payment Gateway"],["jam","🕐 Jam Kerja Telegram"],["cloud","☁️ Cloud Sync"],["keamanan","🔐 Keamanan"],["owner","🔑 Akun Owner"]].map(([id,label]) => (
           <button key={id} style={tabStyle(tab === id)} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
@@ -2276,6 +2947,9 @@ function OwnerPage({ addToast, tg, setTg, systemLocked, setSystemLocked }) {
         </div>
       )}
 
+      {/* ---- TAB CLOUD SYNC ---- */}
+      {tab === "cloud" && <CloudSyncPanel addToast={addToast} />}
+
       {/* ---- TAB KEAMANAN ---- */}
       {tab === "keamanan" && (
         <div style={{ maxWidth: 560 }}>
@@ -2367,6 +3041,7 @@ function OwnerPage({ addToast, tg, setTg, systemLocked, setSystemLocked }) {
 // ==================== MAIN APP ====================
 export default function App() {
   const [loading, setLoading] = useState(true);
+  const [showSupabaseSetup, setShowSupabaseSetup] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => load("session_user", null));
   const [active, setActive] = useState("dashboard");
   const [sideOpen, setSideOpen] = useState(true);
@@ -2374,9 +3049,10 @@ export default function App() {
   const [income, setIncome] = useState(() => load("income", []));
   const [expense, setExpense] = useState(() => load("expense", []));
   const [inventory, setInventory] = useState(() => load("inventory", []));
-  const [tg, setTg] = useState(() => load("telegram", { token: "", chatId: "" }));
+  const [tg, setTg] = useState(() => load("telegram", { token: "", privateId: "", groupId: "", chatId: "" }));
   const [toasts, setToasts] = useState([]);
   const [systemLocked, setSystemLocked] = useState(() => isSystemLocked());
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | error
 
   const addToast = useCallback((msg, type = "info") => {
     const id = Date.now();
@@ -2384,10 +3060,41 @@ export default function App() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
   }, []);
 
+  // Load semua data dari Supabase saat startup
+  useEffect(() => {
+    const loadAllFromCloud = async () => {
+      if (!isSupabaseReady()) return; // skip jika belum dikonfigurasi
+      setSyncStatus("syncing");
+      try {
+        const [
+          cloudBiz, cloudIncome, cloudExpense,
+          cloudInventory, cloudTg
+        ] = await Promise.all([
+          loadFromCloud("biz", {}),
+          loadFromCloud("income", []),
+          loadFromCloud("expense", []),
+          loadFromCloud("inventory", []),
+          loadFromCloud("telegram", { token: "", privateId: "", groupId: "", chatId: "" }),
+        ]);
+        setBiz(cloudBiz);
+        setIncome(cloudIncome);
+        setExpense(cloudExpense);
+        setInventory(cloudInventory);
+        setTg(cloudTg);
+        setSyncStatus("synced");
+      } catch (e) {
+        setSyncStatus("error");
+        console.error("Cloud load error:", e);
+      }
+    };
+    loadAllFromCloud();
+  }, []);
+
   const handleLogin = (user) => { setCurrentUser(user); save("session_user", user); setActive("dashboard"); };
   const handleLogout = () => { setCurrentUser(null); save("session_user", null); setActive("dashboard"); };
 
   if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
+  if (showSupabaseSetup) return <SupabaseSetup onSave={() => { setShowSupabaseSetup(false); window.location.reload(); }} />;
   if (!currentUser) return <LoginScreen onLogin={handleLogin} />;
 
   const isOwner = currentUser.role === "owner";
@@ -2480,8 +3187,23 @@ export default function App() {
         </span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ color: "#64748b", fontSize: 13 }}>{new Date().toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
+          {/* Supabase sync status badge */}
+          {isSupabaseReady() ? (
+            <span style={{
+              background: syncStatus === "synced" ? "#10b98122" : syncStatus === "syncing" ? "#f59e0b22" : syncStatus === "error" ? "#ef444422" : "#33415522",
+              color: syncStatus === "synced" ? "#10b981" : syncStatus === "syncing" ? "#f59e0b" : syncStatus === "error" ? "#ef4444" : "#64748b",
+              padding: "3px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer", border: "1px solid transparent"
+            }} onClick={() => setShowSupabaseSetup(true)}>
+              {syncStatus === "synced" ? "☁️ Cloud Sync" : syncStatus === "syncing" ? "⏳ Syncing..." : syncStatus === "error" ? "⚠️ Sync Error" : "☁️ Cloud"}
+            </span>
+          ) : (
+            <span style={{ background: "#f59e0b22", color: "#f59e0b", padding: "3px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer", border: "1px solid #f59e0b44", fontWeight: 600 }}
+              onClick={() => setShowSupabaseSetup(true)}>
+              ⚙️ Setup Cloud
+            </span>
+          )}
           {systemLocked && <span style={{ background: "#ef444422", color: "#ef4444", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: "1px solid #ef444444", cursor: "pointer" }} onClick={() => setSystemLocked(true)}>🔒 SISTEM TERKUNCI</span>}
-          {!systemLocked && tg.token && <span style={{ background: "#10b98122", color: "#10b981", padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>✈️ Telegram Aktif</span>}
+          {!systemLocked && tg.token && <><span style={{ background: "#ef444422", color: "#ef4444", padding: "3px 10px", borderRadius: 20, fontSize: 12, marginRight: 6 }}>{tg.privateId ? "🔐 Pribadi ✓" : "🔐 Pribadi ✕"}</span><span style={{ background: tg.groupId ? "#3b82f622" : "#33415522", color: tg.groupId ? "#3b82f6" : "#64748b", padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>{tg.groupId ? "💬 Grup ✓" : "💬 Grup ✕"}</span></>}
         </div>
       </header>
 
